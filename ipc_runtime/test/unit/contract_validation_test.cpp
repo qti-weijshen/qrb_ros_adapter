@@ -55,6 +55,17 @@ sensor_proto::PointCloud2 MakeCloud()
 
 constexpr std::uint64_t kCloudBytes = 128;
 
+sensor_proto::Imu MakeImu()
+{
+  sensor_proto::Imu imu;
+  imu.mutable_header()->mutable_stamp()->set_sec(1);
+  imu.mutable_header()->set_frame_id("imu_link");
+  imu.mutable_orientation()->set_w(1.0);
+  imu.mutable_angular_velocity()->set_z(0.1);
+  imu.mutable_linear_acceleration()->set_z(9.8);
+  return imu;
+}
+
 }  // namespace
 
 // UT-IPC-03: Contract validation is the last line before a value reaches either
@@ -131,5 +142,66 @@ TEST(ContractValidation, RejectsInvalidPosesAndLayoutsThePayloadCannotBack)
     const ConversionResult result = ValidatePointCloud2(cloud, c.payloadBytes);
     EXPECT_FALSE(result);
     EXPECT_FALSE(result.Diagnostic().empty());
+  }
+}
+
+// UT-IPC-05: an Imu needs a valid frame id, finite vectors, empty or complete 3x3
+// covariances, and a non-zero quaternion unless the orientation is marked unknown.
+TEST(ContractValidation, RejectsInvalidImu)
+{
+  sensor_proto::Imu full = MakeImu();
+  EXPECT_TRUE(ValidateImu(full));
+  for (int i = 0; i < 9; ++i) {
+    full.add_orientation_covariance(0.1);
+    full.add_angular_velocity_covariance(0.2);
+    full.add_linear_acceleration_covariance(0.3);
+  }
+  EXPECT_TRUE(ValidateImu(full));
+
+  // sensor_msgs/Imu: -1 in orientation_covariance[0] means "no orientation".
+  sensor_proto::Imu unknown = MakeImu();
+  unknown.mutable_orientation()->set_w(0.0);
+  unknown.add_orientation_covariance(-1.0);
+  for (int i = 1; i < 9; ++i) {
+    unknown.add_orientation_covariance(0.0);
+  }
+  EXPECT_TRUE(ValidateImu(unknown));
+
+  using Imu = sensor_proto::Imu;
+  const struct
+  {
+    const char * name;
+    void (*mutate)(Imu &);
+  } cases[] = {
+      {"AbsoluteFrameId", [](Imu & m) { m.mutable_header()->set_frame_id("/imu_link"); }},
+      {"MissingOrientation", [](Imu & m) { m.clear_orientation(); }},
+      {"MissingAngularVelocity", [](Imu & m) { m.clear_angular_velocity(); }},
+      {"MissingLinearAcceleration", [](Imu & m) { m.clear_linear_acceleration(); }},
+      {"ZeroQuaternion", [](Imu & m) { m.mutable_orientation()->set_w(0.0); }},
+      {"NonFiniteOrientation",
+          [](Imu & m) {
+            m.mutable_orientation()->set_x(std::numeric_limits<double>::quiet_NaN());
+          }},
+      {"NonFiniteAcceleration",
+          [](Imu & m) {
+            m.mutable_linear_acceleration()->set_y(std::numeric_limits<double>::infinity());
+          }},
+      {"PartialCovariance", [](Imu & m) { m.add_angular_velocity_covariance(0.0); }},
+      {"NonFiniteCovariance",
+          [](Imu & m) {
+            for (int i = 0; i < 9; ++i) {
+              m.add_linear_acceleration_covariance(std::numeric_limits<double>::quiet_NaN());
+            }
+          }},
+      {"NanosecOverflow",
+          [](Imu & m) { m.mutable_header()->mutable_stamp()->set_nanosec(1000000000U); }},
+  };
+  for (const auto & c : cases) {
+    SCOPED_TRACE(c.name);
+    Imu imu = MakeImu();
+    c.mutate(imu);
+    const ConversionResult rejected = ValidateImu(imu);
+    EXPECT_FALSE(rejected);
+    EXPECT_FALSE(rejected.Diagnostic().empty());
   }
 }

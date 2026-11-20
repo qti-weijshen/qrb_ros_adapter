@@ -115,6 +115,59 @@ struct RosProbeSample<adapter::PoseRosMessage>
   }
 };
 
+// --- sensor.v1.Imu (inline) ---------------------------------------------------
+
+/**
+ * The probe fills the linear acceleration covariance; the orientation is the
+ * identity and both vectors are zero.
+ */
+template <>
+struct RosProbeSample<adapter::ImuRosMessage>
+{
+  using Message = adapter::ImuRosMessage;
+  static constexpr const char * kFrameId = "stream_probe";
+
+  class Source
+  {
+  public:
+    Source(std::uint64_t, std::uint32_t, std::uint32_t streamTag) : streamTag_(streamTag) {}
+
+    SendOutcome Next(std::uint64_t sequence,
+        std::unique_ptr<Message> & out,
+        std::uint64_t & sendTimeNs)
+    {
+      out = std::make_unique<Message>();
+      out->header.frame_id = kFrameId;
+      out->orientation.w = 1.0;
+      const std::uint64_t now = MonotonicNowNs();
+      sendTimeNs = now;
+      out->header.stamp.sec = static_cast<std::int32_t>(now / 1000000000ull);
+      out->header.stamp.nanosec = static_cast<std::uint32_t>(now % 1000000000ull);
+      StampDoubles(out->linear_acceleration_covariance.data(),
+          out->linear_acceleration_covariance.size(), streamTag_, sequence, now);
+      return SendOutcome::kSent;
+    }
+
+    std::uint64_t PayloadBytes() const { return sizeof(Message{}.linear_acceleration_covariance); }
+
+  private:
+    std::uint32_t streamTag_;
+  };
+
+  static FrameReading Check(const Message & imu,
+      std::uint32_t streamTag,
+      std::uint64_t & payloadBytes)
+  {
+    payloadBytes = sizeof(imu.linear_acceleration_covariance);
+    FrameReading reading = CheckDoubles(imu.linear_acceleration_covariance.data(),
+        imu.linear_acceleration_covariance.size(), streamTag);
+    if (reading.check == FrameCheck::kOk &&
+        (imu.header.frame_id != kFrameId || imu.orientation.w != 1.0))
+      reading.check = FrameCheck::kBadLayout;
+    return reading;
+  }
+};
+
 // --- sensor.v1.PointCloud2 (DMA-BUF) ------------------------------------------
 
 /**

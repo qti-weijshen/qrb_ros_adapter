@@ -137,6 +137,58 @@ struct HcmProbeSample<adapter::PoseHcmDescriptor>
   }
 };
 
+// --- sensor.v1.Imu --------------------------------------------------------------
+
+/**
+ * The probe fills the linear acceleration covariance; the orientation is the
+ * identity and both vectors are zero.
+ */
+template <>
+struct HcmProbeSample<adapter::ImuHcmDescriptor>
+{
+  using Descriptor = adapter::ImuHcmDescriptor;
+  static constexpr const char * kFrameId = "stream_probe";
+  static constexpr std::size_t kCovarianceSize = 9;
+
+  static std::string CheckPayloadBytes(std::uint64_t) { return {}; }
+
+  static std::uint64_t SentBytes(const HcmSenderState &)
+  {
+    return sizeof(std::declval<const Descriptor &>().linear_acceleration_covariance);
+  }
+
+  static HcmStampResult Stamp(Descriptor & imu, HcmSenderState & state, std::uint64_t sequence)
+  {
+    if (imu.frameId != kFrameId)
+      (void)imu.frameId.Assign(kFrameId);  // fits FrameId_t
+    imu.orientation = QRB::Memory::Quaternion_t{};
+    imu.angular_velocity = QRB::Memory::Vector3d_t{};
+    imu.linear_acceleration = QRB::Memory::Vector3d_t{};
+    for (double & value : imu.orientation_covariance)
+      value = 0.0;
+    for (double & value : imu.angular_velocity_covariance)
+      value = 0.0;
+    const std::uint64_t now = MonotonicNowNs();
+    state.lastSendNs = now;
+    imu.timestampNs = now;
+    StampDoubles(
+        imu.linear_acceleration_covariance, kCovarianceSize, state.streamTag, sequence, now);
+    return HcmStampResult::kOk;
+  }
+
+  static FrameReading Check(const Descriptor & imu,
+      std::uint32_t streamTag,
+      std::uint64_t & payloadBytes)
+  {
+    payloadBytes = sizeof(imu.linear_acceleration_covariance);
+    FrameReading reading =
+        CheckDoubles(imu.linear_acceleration_covariance, kCovarianceSize, streamTag);
+    if (reading.check == FrameCheck::kOk && (imu.frameId != kFrameId || imu.orientation.w != 1.0))
+      reading.check = FrameCheck::kBadLayout;
+    return reading;
+  }
+};
+
 // --- sensor.v1.PointCloud2 (DMA-BUF) ------------------------------------------
 
 /** One row of `payload_bytes / 16` points x, y, z, intensity (FLOAT32). */

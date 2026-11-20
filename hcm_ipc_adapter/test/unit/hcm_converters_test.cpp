@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "qrb_ros_adapter/hcm_ipc_adapter/flow_client/imu_hcm_converter.hpp"
 #include "qrb_ros_adapter/hcm_ipc_adapter/flow_client/point_cloud_hcm_converter.hpp"
 #include "qrb_ros_adapter/hcm_ipc_adapter/flow_client/pose_hcm_converter.hpp"
 
@@ -58,6 +59,24 @@ PointCloudHcmContract MakeCloud()
     field->set_count(1);
   }
   return cloud;
+}
+
+ImuHcmContract MakeImu()
+{
+  ImuHcmContract imu;
+  imu.mutable_header()->mutable_stamp()->set_sec(5);
+  imu.mutable_header()->mutable_stamp()->set_nanosec(11);
+  imu.mutable_header()->set_frame_id("imu_link");
+  imu.mutable_orientation()->set_z(0.6);
+  imu.mutable_orientation()->set_w(0.8);
+  imu.mutable_angular_velocity()->set_x(0.25);
+  imu.mutable_linear_acceleration()->set_z(9.81);
+  for (int i = 0; i < 9; ++i) {
+    imu.add_orientation_covariance(0.01 * i);
+    imu.add_angular_velocity_covariance(0.02 * i);
+    imu.add_linear_acceleration_covariance(0.03 * i);
+  }
+  return imu;
 }
 
 /** @brief A PointCloud descriptor over heap storage; converters only touch pBuf. */
@@ -190,4 +209,45 @@ TEST(HcmConverters, RoundTripEveryFieldAndRejectInvalidValuesOrPayloads)
     EXPECT_FALSE((ConvertHcmToContract<PointCloudHcmContract, PointCloudHcmDescriptor>(
         target.descriptor, out)));
   }
+}
+
+// UT-HCM-05: Imu keeps the frame id, orientation, both vectors and the three
+// covariances, and a rejected value leaves the descriptor untouched.
+TEST(HcmConverters, ImuRoundTripAndRejectInvalidValues)
+{
+  const ImuHcmContract source = MakeImu();
+  ImuHcmDescriptor descriptor;
+  ASSERT_TRUE(
+      (ConvertContractToHcm<ImuHcmContract, ImuHcmDescriptor>(source, DmaBufView{}, descriptor)));
+  EXPECT_EQ(descriptor.timestampNs, 5000000011u);
+  EXPECT_TRUE(descriptor.frameId == "imu_link");
+  EXPECT_DOUBLE_EQ(descriptor.orientation.w, 0.8);
+  EXPECT_DOUBLE_EQ(descriptor.angular_velocity.x, 0.25);
+  EXPECT_DOUBLE_EQ(descriptor.linear_acceleration.z, 9.81);
+  EXPECT_DOUBLE_EQ(descriptor.linear_acceleration_covariance[8], 0.24);
+  EXPECT_EQ(descriptor.validSize, 0u);
+
+  ImuHcmContract back;
+  back.add_orientation_covariance(42.0);
+  ASSERT_TRUE((ConvertHcmToContract<ImuHcmContract, ImuHcmDescriptor>(descriptor, back)));
+  EXPECT_EQ(back.SerializeAsString(), source.SerializeAsString());
+
+  ImuHcmDescriptor untouched;
+  ASSERT_EQ(untouched.frameId.Assign("untouched"), QC::QC_STATUS_OK);
+  ImuHcmContract invalid = MakeImu();
+  invalid.mutable_angular_velocity()->set_y(std::numeric_limits<double>::quiet_NaN());
+  ImuHcmContract longFrame = MakeImu();
+  longFrame.mutable_header()->set_frame_id(std::string(QRB::Memory::QRB_FRAME_ID_MAX_LEN + 1, 'f'));
+  for (const ImuHcmContract * rejected : {&invalid, &longFrame}) {
+    const ConversionResult in =
+        ConvertContractToHcm<ImuHcmContract, ImuHcmDescriptor>(*rejected, DmaBufView{}, untouched);
+    EXPECT_FALSE(in);
+    EXPECT_FALSE(in.Diagnostic().empty());
+    EXPECT_TRUE(untouched.frameId == "untouched");
+    EXPECT_EQ(untouched.timestampNs, 0u);
+  }
+
+  descriptor.orientation_covariance[2] = std::numeric_limits<double>::infinity();
+  ImuHcmContract out;
+  EXPECT_FALSE((ConvertHcmToContract<ImuHcmContract, ImuHcmDescriptor>(descriptor, out)));
 }

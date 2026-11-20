@@ -29,6 +29,23 @@ bool IsFinitePose(const qrb::contract::geometry::v1::Pose & pose)
          std::isfinite(orientation.w());
 }
 
+bool IsFiniteVector3(const qrb::contract::geometry::v1::Vector3 & vector)
+{
+  return std::isfinite(vector.x()) && std::isfinite(vector.y()) && std::isfinite(vector.z());
+}
+
+/** @brief A 3x3 covariance is either absent or 9 finite values. */
+bool IsValidCovariance3x3(const google::protobuf::RepeatedField<double> & covariance)
+{
+  if (covariance.size() != 0 && covariance.size() != 9)
+    return false;
+  for (double value : covariance) {
+    if (!std::isfinite(value))
+      return false;
+  }
+  return true;
+}
+
 std::uint32_t PointFieldElementSize(qrb::contract::sensor::v1::PointFieldType type)
 {
   using namespace qrb::contract::sensor::v1;
@@ -95,6 +112,35 @@ ConversionResult ValidatePoseWithCovarianceStamped(
     if (!std::isfinite(covariance))
       return Fail("covariance contains a non-finite value");
   }
+  return ConversionResult::Success();
+}
+
+ConversionResult ValidateImu(const qrb::contract::sensor::v1::Imu & imu)
+{
+  ConversionResult header = ValidateHeader(imu.header());
+  if (!header)
+    return header;
+  if (!imu.has_orientation() || !imu.has_angular_velocity() || !imu.has_linear_acceleration())
+    return Fail("orientation, angular_velocity and linear_acceleration are required");
+
+  const auto & orientation = imu.orientation();
+  if (!std::isfinite(orientation.x()) || !std::isfinite(orientation.y()) ||
+      !std::isfinite(orientation.z()) || !std::isfinite(orientation.w()))
+    return Fail("orientation contains a non-finite value");
+  if (!IsFiniteVector3(imu.angular_velocity()) || !IsFiniteVector3(imu.linear_acceleration()))
+    return Fail("angular_velocity or linear_acceleration contains a non-finite value");
+  if (!IsValidCovariance3x3(imu.orientation_covariance()) ||
+      !IsValidCovariance3x3(imu.angular_velocity_covariance()) ||
+      !IsValidCovariance3x3(imu.linear_acceleration_covariance()))
+    return Fail("each covariance must be empty or contain 9 finite values");
+
+  // sensor_msgs/Imu marks an unknown orientation with -1 in the first
+  // covariance element; only a known orientation must be a valid quaternion.
+  const bool orientationUnknown =
+      !imu.orientation_covariance().empty() && imu.orientation_covariance(0) == -1.0;
+  if (!orientationUnknown && orientation.x() == 0.0 && orientation.y() == 0.0 &&
+      orientation.z() == 0.0 && orientation.w() == 0.0)
+    return Fail("orientation quaternion must be non-zero");
   return ConversionResult::Success();
 }
 
