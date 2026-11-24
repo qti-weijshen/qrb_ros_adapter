@@ -11,12 +11,10 @@
 #include <array>
 #include <atomic>
 #include <cstring>
-#include <memory>
 #include <mutex>
 #include <nlohmann/json.hpp>
 #include <string>
 #include <utility>
-#include <vector>
 
 #include "QC/Infras/Memory/BufferDescriptor.hpp"
 #include "QC/Node/Ifs/QCNodeConfigIfs.hpp"
@@ -252,8 +250,8 @@ struct HcmProbeSample<adapter::TwistHcmDescriptor>
  * reports; every transform has the identity rotation's w and its own child
  * frame, so a sample that drops or reorders transforms is caught as a bad layout.
  *
- * The shared frames give an inline Contract's descriptor no buffer, so a sender
- * attaches heap storage of its own to each descriptor, once.
+ * The buffer is the host's: the shared frames give a TFMessage descriptor heap
+ * storage for the most transforms a message may carry.
  */
 template <>
 struct HcmProbeSample<adapter::TFMessageHcmDescriptor>
@@ -270,8 +268,6 @@ struct HcmProbeSample<adapter::TFMessageHcmDescriptor>
 
   static HcmStampResult Stamp(Descriptor & tf, HcmSenderState & state, std::uint64_t sequence)
   {
-    if (tf.pBuf == nullptr)
-      AttachStorage(tf);
     // Any buffer the CPU reaches: a local DMA-BUF is synced, heap memory needs no sync.
     int fd = -1;
     if (!HoldsTransforms(tf, kTransforms) || !UsableBuffer(tf, fd))
@@ -345,23 +341,6 @@ private:
   static std::string ChildFrameId(std::uint32_t index)
   {
     return "stream_probe_" + std::to_string(index);
-  }
-
-  /**
-   * Heap storage for the transforms of one descriptor, kept for the life of the
-   * probe; a sender cycles through at most ContractFramePool::kMaxSize of them.
-   */
-  static void AttachStorage(Descriptor & tf)
-  {
-    static std::mutex mutex;
-    static std::vector<std::unique_ptr<std::array<Transform, kTransforms>>> storage;
-    std::lock_guard<std::mutex> lock(mutex);
-    storage.push_back(std::make_unique<std::array<Transform, kTransforms>>());
-    tf.pBuf = storage.back()->data();
-    tf.size = sizeof(*storage.back());
-    tf.offset = 0;
-    tf.validSize = 0;
-    tf.allocatorType = QC::Memory::QC_MEMORY_ALLOCATOR_HEAP;
   }
 
   /** The fd if the buffer is a local DMA-BUF, else -1; false for a buffer the CPU cannot reach. */

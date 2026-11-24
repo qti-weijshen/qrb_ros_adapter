@@ -21,7 +21,8 @@ namespace
 
 /**
  * @brief How many transforms fit the descriptor's buffer from its offset on, and the fd to
- * sync around CPU access to it: -1 for heap memory, which needs no sync.
+ * sync around CPU access to it: -1 for heap memory, which needs no sync. InspectHcmBuffer()
+ * reports an offset past the size as kUnusable, so the subtraction cannot wrap.
  */
 bool BufferCapacity(const TFMessageHcmDescriptor & descriptor, std::size_t & capacity, int & fd)
 {

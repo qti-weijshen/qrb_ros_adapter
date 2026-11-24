@@ -13,9 +13,8 @@
 
 using namespace qrb::adapter;
 
-// UT-HCM-04: the inherited buffer of a descriptor is classified before the CPU touches it:
-// only a DMA-BUF of this process is accepted and synced, and anything else, heap memory
-// included, is told apart from it; syncing no fd succeeds.
+// UT-HCM-04: the inherited buffer is classified before the CPU touches it. Only a DMA-BUF of
+// this process is synced; heap memory and an fd of -1 are not.
 TEST(HcmDmaBuffer, ClassifiesTheInheritedBufferAndSyncsOnlyDmaBufs)
 {
   char storage[64] = {};

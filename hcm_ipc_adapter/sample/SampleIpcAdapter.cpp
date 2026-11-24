@@ -141,9 +141,6 @@ private:
     uint64_t m_frames = 0;
     uint64_t m_errorCount = 0;
     uint64_t m_poolExhausted = 0;
-    // The transforms of the frame FillFrame() sends as a TFMessage; the shared frames give an
-    // inline Contract's descriptor no buffer, so the TFMessage case attaches this one.
-    QRB::Memory::TransformStamped_t m_transforms[2];
 
     static constexpr const char *kPointCloudContract = "qrb.contract.sensor.v1.PointCloud2";
     static constexpr const char *kPoseContract =
@@ -450,22 +447,20 @@ void SampleIpcAdapter::FillFrame( ContractFrame &frame )
     }
 
     auto *tf = dynamic_cast<QRB::Memory::TFMessageDescriptor_t *>( &frame.Descriptor() );
-    if ( nullptr != tf )
+    if ( ( nullptr != tf ) &&
+         ( tf->size >= QRB::Memory::TFMessageDescriptor_t::CalcBufferSize( 2 ) ) )
     {
-        // map -> odom and odom -> base_link, in heap memory of the sample.
+        // map -> odom and odom -> base_link, in the heap storage of the frame.
         const char *frames[2][2] = { { "map", "odom" }, { "odom", "base_link" } };
+        tf->transformCount = 2;
+        tf->validSize = QRB::Memory::TFMessageDescriptor_t::CalcBufferSize( 2 );
         for ( uint32_t i = 0; i < 2; i++ )
         {
-            m_transforms[i] = QRB::Memory::TransformStamped_t{};
-            (void) m_transforms[i].frameId.Assign( frames[i][0] );
-            (void) m_transforms[i].childFrameId.Assign( frames[i][1] );
+            QRB::Memory::TransformStamped_t *transform = tf->GetTransformPtr( i );
+            *transform = QRB::Memory::TransformStamped_t{};
+            (void) transform->frameId.Assign( frames[i][0] );
+            (void) transform->childFrameId.Assign( frames[i][1] );
         }
-        tf->pBuf = m_transforms;
-        tf->size = sizeof( m_transforms );
-        tf->offset = 0;
-        tf->validSize = sizeof( m_transforms );
-        tf->allocatorType = Memory::QC_MEMORY_ALLOCATOR_HEAP;
-        tf->transformCount = 2;
     }
 
     auto *cloud = dynamic_cast<QRB::Memory::PointCloudDescriptor_t *>( &frame.Descriptor() );
@@ -534,12 +529,16 @@ void SampleIpcAdapter::UpdateFrame( ContractFrame &frame )
     }
 
     auto *tf = dynamic_cast<QRB::Memory::TFMessageDescriptor_t *>( &frame.Descriptor() );
-    if ( nullptr != tf )
+    QRB::Memory::TransformStamped_t *mapToOdom =
+            ( nullptr != tf ) ? tf->GetTransformPtr( 0 ) : nullptr;
+    QRB::Memory::TransformStamped_t *odomToBase =
+            ( nullptr != tf ) ? tf->GetTransformPtr( 1 ) : nullptr;
+    if ( ( nullptr != mapToOdom ) && ( nullptr != odomToBase ) )
     {
         // map -> odom stays put; odom -> base_link moves along x by 1 cm per frame.
-        m_transforms[0].timestampNs = nowNs;
-        m_transforms[1].timestampNs = nowNs;
-        m_transforms[1].transform.translation.x = (double) m_frames * 0.01;
+        mapToOdom->timestampNs = nowNs;
+        odomToBase->timestampNs = nowNs;
+        odomToBase->transform.translation.x = (double) m_frames * 0.01;
     }
 }
 

@@ -6,7 +6,7 @@
  * @brief The Contract descriptor a sample hands to the IPC Adapter, and a pool of them.
  *
  * A ContractFrame owns one qrb_contracts descriptor. A DMA-BUF Contract gets a buffer of its own
- * from the system DMA heap, mapped for the CPU; an inline Contract needs none.
+ * from the system DMA heap, mapped for the CPU.
  * Samples pass frames to each other as std::shared_ptr<ContractFrame> over the DataBroker: a frame
  * is free again once the only reference left is the pool's.
  */
@@ -15,7 +15,9 @@
 #define QRB_ROS_ADAPTER_SAMPLE_CONTRACT_FRAME_HPP
 
 #include "QC/Infras/Memory/BufferDescriptor.hpp"
+#include "QRB/Memory/Geometry/TFMessageDescriptor.hpp"
 #include "qrb_ros_adapter/hcm_ipc_adapter/flow_client/hcm_converters.hpp"
+#include "qrb_ros_adapter/ipc_runtime/contract_limits.hpp"
 
 #include <atomic>
 #include <fcntl.h>
@@ -69,8 +71,20 @@ public:
             return ( QC_STATUS_OK != ret ) ? ret : QC_STATUS_UNSUPPORTED;
         }
 
-        // Every qrb_contracts descriptor inherits BufferDescriptor_t, but only a DMA-BUF Contract
-        // keeps its data in that buffer; an inline one (Pose) carries everything in its own fields.
+        // A DMA-BUF Contract keeps its data in the buffer.
+        auto *tf = dynamic_cast<QRB::Memory::TFMessageDescriptor_t *>( created.get() );
+        if ( nullptr != tf )
+        {
+            // The Adapter writes a received TFMessage here, so it must fit the largest one.
+            m_transforms.resize( qrb::adapter::contract_limits::kMaxTransformCount );
+            tf->pBuf = m_transforms.data();
+            tf->size = QRB::Memory::TFMessageDescriptor_t::CalcBufferSize(
+                    (uint32_t) m_transforms.size() );
+            tf->offset = 0;
+            tf->validSize = 0;
+            tf->allocatorType = Memory::QC_MEMORY_ALLOCATOR_HEAP;
+            tf->transformCount = 0;
+        }
         auto *buffer = dynamic_cast<Memory::BufferDescriptor_t *>( created.get() );
         if ( ( qrb::adapter::PayloadClass::kDmaBuf == binding->descriptor->payloadClass ) &&
              ( nullptr != buffer ) )
@@ -127,6 +141,7 @@ private:
     int m_fd = -1;
     void *m_data = nullptr;
     size_t m_size = 0;
+    std::vector<QRB::Memory::TransformStamped_t> m_transforms;
 };
 
 /** @brief What samples publish and receive over the DataBroker. */

@@ -14,7 +14,7 @@ namespace qrb::adapter
 enum class HcmBufferAccess
 {
   kNone,         ///< No inherited buffer, or no storage attached.
-  kHostMemory,   ///< Heap memory; the Adapter does not accept it.
+  kHostMemory,   ///< Heap memory the CPU reaches directly.
   kLocalDmaBuf,  ///< A DMA-BUF of this process, mapped at pBuf.
   kUnusable,     ///< Invalid offset, foreign process or unknown allocator.
 };

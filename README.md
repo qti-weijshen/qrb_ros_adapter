@@ -52,9 +52,8 @@ The Flow is set in the QCNode static config:
 The supported Contracts, each with its HCM descriptor, ROS message and payload
 class, are the entries of
 [contract_mappings.def](ipc_runtime/include/qrb_ros_adapter/ipc_runtime/contract_mappings.def).
-A DMA-BUF Contract carries its payload in a DMA-BUF behind the descriptor; an
-inline Contract travels in the IPC frame and needs no buffer. A frame name
-longer than the HCM descriptor holds is rejected, not truncated.
+A DMA-BUF Contract carries its payload in a DMA-BUF behind the descriptor. A
+frame name longer than the HCM descriptor holds is rejected, not truncated.
 
 Monitoring reports `sessionConnected`, `frameCount`, `errorCount`,
 `last/average/min/maxLatencyNs` and `noDataCount`.
