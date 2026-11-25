@@ -79,7 +79,7 @@ struct HeapCloudDescriptor
 
 }  // namespace
 
-// UT-HCM-03: Contract <-> HCM conversion keeps every field, rejects an invalid
+// Contract <-> HCM conversion keeps every field, rejects an invalid
 // value before it reaches either side, and bounds the PointCloud payload copy on
 // both ends.
 TEST(HcmConverters, RoundTripEveryFieldAndRejectInvalidValuesOrPayloads)
@@ -221,7 +221,7 @@ OdometryHcmContract MakeOdometry()
 
 }  // namespace
 
-// UT-HCM-03: Odometry keeps both frames, the pose and the twist with their
+// Odometry keeps both frames, the pose and the twist with their
 // covariances, and rejects what the fixed-size descriptor cannot hold.
 TEST(HcmConverters, OdometryRoundTripsEveryFieldAndRejectsInvalidValues)
 {
@@ -291,7 +291,7 @@ TwistHcmContract MakeTwist()
 
 }  // namespace
 
-// UT-HCM-04: TwistStamped keeps its frame, stamp and twist, and rejects what the
+// TwistStamped keeps its frame, stamp and twist, and rejects what the
 // fixed-size descriptor cannot hold.
 TEST(HcmConverters, TwistRoundTripsEveryFieldAndRejectsInvalidValues)
 {
@@ -372,7 +372,7 @@ struct HeapTFDescriptor
 
 }  // namespace
 
-// UT-HCM-05: TFMessage writes every transform into the descriptor's buffer,
+// TFMessage writes every transform into the descriptor's buffer,
 // reads them back unchanged, and rejects what that buffer cannot hold.
 TEST(HcmConverters, TFMessageRoundTripsThroughTheBufferAndRejectsWhatItCannotHold)
 {

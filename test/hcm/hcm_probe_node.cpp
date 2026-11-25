@@ -55,8 +55,8 @@ enum class HcmStampResult
 };
 
 /**
- * @brief The fd to sync around CPU access to the buffer of `descriptor`; like
- * the Adapter, false unless the buffer is a DMA-BUF of this process.
+ * @brief The fd to sync around CPU access to the buffer of `descriptor`; the same rule as
+ * the Adapter: false unless the buffer is a DMA-BUF of this process.
  */
 inline bool LocalBufferFd(const QC::Memory::BufferDescriptor_t & descriptor, int & fd)
 {

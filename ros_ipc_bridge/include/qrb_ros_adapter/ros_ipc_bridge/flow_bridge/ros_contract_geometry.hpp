@@ -19,7 +19,7 @@ namespace qrb::adapter
 
 /**
  * @brief Field-for-field copies between the ROS and Contract geometry messages,
- * shared by the inline geometry converters.
+ * shared by the Inline geometry converters.
  *
  * ROS to Contract always writes all 36 covariance values. Contract to ROS
  * expects a validated Contract: its covariance is empty (copied as the zero

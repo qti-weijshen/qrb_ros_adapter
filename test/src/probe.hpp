@@ -9,7 +9,7 @@
 // the statistics of a stream, and the parameters. Neither ROS nor QCNode is
 // used here.
 //
-// A byte payload (DMA-BUF Contracts) is laid out as
+// A byte payload (DmaBuf Contracts) is laid out as
 //
 //   [ ProbeHeader | pattern ... | sentinel ]
 //
@@ -803,7 +803,7 @@ struct ProbeParams
   std::string adapterConfig;             // the Adapter's static config
   double fps{30.0};                      // frames per second, 0: unlimited
   std::uint64_t payloadBytes{1u << 20};  // what a sender sends per frame
-  std::uint64_t bufferBytes{32u << 20};  // the DMA buffer an HCM receiver offers
+  std::uint64_t bufferBytes{32u << 20};  // DMA buffer size of the HCM receiver (R2H)
   double duration{0.0};                  // seconds, 0: until stopped
   double warmup{0.0};                    // seconds
   std::string log;                       // text log file, empty: none

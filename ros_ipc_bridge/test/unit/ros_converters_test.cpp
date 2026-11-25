@@ -77,7 +77,7 @@ PointCloudRosMessage MakeRosCloud(std::size_t bufferSize = kCloudBytes)
 
 }  // namespace
 
-// UT-ROS-02: PointCloud2 metadata and every PointField datatype map 1:1 and the
+// PointCloud2 metadata and every PointField datatype map 1:1 and the
 // payload context binds the DMA-BUF instead of copying bytes; a layout the
 // payload cannot back is rejected, and a payload context binds once within
 // offset + length <= capacity.
@@ -166,7 +166,7 @@ TEST(PointCloudRosConverter, MapsMetadataBindsTheDmaBufAndRejectsWhatItCannotBac
   EXPECT_EQ(unassigned, nullptr);
 }
 
-// UT-ROS-02: nav_msgs/Odometry maps 1:1 to the Contract, both frames, pose and
+// nav_msgs/Odometry maps 1:1 to the Contract, both frames, pose and
 // twist with their covariances; an invalid value is rejected in either direction.
 TEST(OdometryRosConverter, MapsEveryFieldBothWaysAndRejectsInvalidValues)
 {
@@ -211,7 +211,7 @@ TEST(OdometryRosConverter, MapsEveryFieldBothWaysAndRejectsInvalidValues)
   EXPECT_FALSE(OdometryRosConversion::ContractToRos(badContract, back));
 }
 
-// UT-ROS-03: geometry_msgs/TwistStamped maps 1:1 to the Contract; an invalid
+// geometry_msgs/TwistStamped maps 1:1 to the Contract; an invalid
 // value is rejected in either direction.
 TEST(TwistRosConverter, MapsEveryFieldBothWaysAndRejectsInvalidValues)
 {
@@ -243,7 +243,7 @@ TEST(TwistRosConverter, MapsEveryFieldBothWaysAndRejectsInvalidValues)
   EXPECT_FALSE(TwistRosConversion::ContractToRos(badContract, back));
 }
 
-// UT-ROS-04: tf2_msgs/TFMessage maps every transform 1:1 to the Contract; an
+// tf2_msgs/TFMessage maps every transform 1:1 to the Contract; an
 // invalid transform is rejected in either direction.
 TEST(TFMessageRosConverter, MapsEveryTransformBothWaysAndRejectsInvalidValues)
 {

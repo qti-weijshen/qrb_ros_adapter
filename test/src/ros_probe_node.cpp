@@ -588,7 +588,7 @@ constexpr ParamHelp kParamHelp[] = {
     {"adapter_config", "the Adapter's static JSON; the Flow comes from it only"},
     {"fps", "frames per second of a sender, 0: unlimited"},
     {"payload_bytes", "payload of each frame this side sends"},
-    {"buffer_bytes", "the HCM receiver's buffer; ignored on this side"},
+    {"buffer_bytes", "DMA buffer size of the HCM receiver (R2H); ignored on this side"},
     {"duration", "seconds to run, 0: until unloaded or a signal"},
     {"warmup", "seconds a receiver does not measure"},
     {"log",

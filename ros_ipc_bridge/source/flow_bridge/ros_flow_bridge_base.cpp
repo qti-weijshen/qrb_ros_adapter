@@ -410,7 +410,7 @@ Status RosFlowBridgeBase::HandlePublishRequest(const TransportHeader & header,
   if (isDmaBuf) {
     if (header.fdCount != 1 || fds.size() != 1) {
       session_.SendStatusResponse(Operation::kPublishResponse, header.requestId,
-          Status::kProtocolError, "DMA-BUF contract requires exactly one fd");
+          Status::kProtocolError, "DmaBuf contract requires exactly one fd");
       Fail(Status::kProtocolError, "PUBLISH_REQUEST fd count != 1");
       return Status::kProtocolError;
     }
@@ -435,13 +435,13 @@ Status RosFlowBridgeBase::HandlePublishRequest(const TransportHeader & header,
     inbound.offset = static_cast<std::size_t>(header.payloadOffset);
   } else if (header.fdCount != 0) {
     session_.SendStatusResponse(Operation::kPublishResponse, header.requestId,
-        Status::kProtocolError, "inline contract must not carry an fd");
-    Fail(Status::kProtocolError, "inline PUBLISH_REQUEST carried an fd");
+        Status::kProtocolError, "Inline contract must not carry an fd");
+    Fail(Status::kProtocolError, "Inline PUBLISH_REQUEST carried an fd");
     return Status::kProtocolError;
   } else if (header.payloadOffset != 0) {
     session_.SendStatusResponse(Operation::kPublishResponse, header.requestId,
-        Status::kProtocolError, "inline contract must not carry a DMA-BUF offset");
-    Fail(Status::kProtocolError, "inline PUBLISH_REQUEST carried a DMA-BUF offset");
+        Status::kProtocolError, "Inline contract must not carry a DmaBuf offset");
+    Fail(Status::kProtocolError, "Inline PUBLISH_REQUEST carried a DmaBuf offset");
     return Status::kProtocolError;
   }
 

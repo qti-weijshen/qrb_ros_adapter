@@ -44,7 +44,7 @@ std::string HcmStringToContract(const QC::QCString<N> & source)
 
 /**
  * @brief Field-for-field copies between the Contract geometry messages and the
- * qrb_contracts types, shared by the inline geometry converters.
+ * qrb_contracts types, shared by the Inline geometry converters.
  *
  * The Contract side must already be validated: its covariance is empty (copied
  * as the zero matrix, "unknown") or holds the 36 values the array holds. The

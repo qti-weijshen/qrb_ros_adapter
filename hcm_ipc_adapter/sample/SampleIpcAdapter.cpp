@@ -26,7 +26,8 @@
  *   contract_type : (optional) a mapped Contract, default qrb.contract.sensor.v1.PointCloud2
  *   direction     : (optional) 0: HCM to ROS (default), 1: ROS to HCM
  *   ros_topic     : (optional) default /qrb_ros_adapter/sample/points for PointCloud2,
- *                   .../pose for PoseWithCovarianceStamped, else .../<contract in snake_case>
+ *                   .../pose for PoseWithCovarianceStamped, else .../<message name in snake_case,
+ *                   e.g. odometry for Odometry>
  *   reliability   : (optional) reliable or best_effort, default the ROS default
  *   durability    : (optional) volatile or transient_local, default the ROS default
  *   depth         : (optional) 1..32, default the ROS default
@@ -35,8 +36,8 @@
  *   pool_size     : (optional) frames to fetch into with output_topic, 1..32, default 4
  *   fps           : (optional) frames per second, 0 for no pause, default 30
  *   payload_bytes : (optional) bytes of points sent to ROS, for PointCloud2, default 1048576
- *   buffer_bytes  : (optional) buffer received from ROS into, for a DMA-BUF Contract,
- *                   default 33554432
+ *   buffer_bytes  : (optional) direction 1, for a DmaBuf Contract: size of the DMA buffer the
+ *                   sample receives into, default 33554432
  */
 
 #include "ContractFrame.hpp"
@@ -223,7 +224,7 @@ std::string SampleIpcAdapter::DefaultTopic() const
         return topic + "pose";
     }
 
-    // The message name of the Contract in snake_case, e.g. ObjectDetection: object_detection.
+    // The message name of the Contract in snake_case, e.g. Odometry: odometry.
     std::string message = m_contract.substr( m_contract.rfind( '.' ) + 1 );
     bool first = true;
     for ( char c : message )
