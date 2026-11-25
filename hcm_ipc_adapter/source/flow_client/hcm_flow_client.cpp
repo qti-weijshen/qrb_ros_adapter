@@ -49,12 +49,6 @@ Status QueryDmaBufSize(int fd, std::uint64_t & outSize)
   return Status::kOk;
 }
 
-/** A DmaBuf Contract needs a DMA-BUF of this process, since its fd crosses the Session. */
-bool LocalDmaBuffer(const QC::Memory::QCBufferDescriptorBase_t & descriptor, int & fd)
-{
-  return InspectHcmBuffer(descriptor, fd) == HcmBufferAccess::kLocalDmaBuf;
-}
-
 }  // namespace
 
 HcmFlowClient::~HcmFlowClient()
@@ -377,15 +371,17 @@ Status HcmFlowClient::Fetch(QC::Memory::QCBufferDescriptorBase_t & target)
     return Fail(Status::kProtocolError, "inline contract must not carry a DMA-BUF offset");
   }
 
-  // targetFd stays -1 for an Inline Contract, so the target sync below is a no-op.
+  // targetFd is -1 for heap storage, which makes the target sync below a no-op.
   int targetFd = -1;
-  if (isDmaBuf && !LocalDmaBuffer(target, targetFd)) {
+  const HcmBufferAccess targetAccess = InspectHcmBuffer(target, targetFd);
+  if (isDmaBuf && targetAccess != HcmBufferAccess::kLocalDmaBuf &&
+      targetAccess != HcmBufferAccess::kHostMemory) {
     if (cpuReadStarted)
       EndDmaBufCpuRead(fds[0].Get());
     ::munmap(mappedAddress, mappedSize);
     fds[0].Reset();
     return RejectFetched(requestId, Status::kInvalidArgument,
-        "HCM descriptor does not provide a writable local DMA-BUF");
+        "HCM descriptor provides neither heap memory nor a local DMA-BUF");
   }
   Status targetSync = BeginDmaBufCpuWrite(targetFd);
   if (targetSync != Status::kOk) {
@@ -450,10 +446,11 @@ Status HcmFlowClient::Publish(const QC::Memory::QCBufferDescriptorBase_t & sourc
   }
 
   const bool isDmaBuf = context_.Descriptor()->payloadClass == PayloadClass::kDmaBuf;
-  // sourceFd stays -1 for an Inline Contract, so the source sync below is a no-op.
+  // sourceFd is -1 unless the source is a local DMA-BUF, which makes the sync below a no-op.
   int sourceFd = -1;
+  const HcmBufferAccess sourceAccess = InspectHcmBuffer(source, sourceFd);
   // Frame errors before PUBLISH_REQUEST is sent drop only this frame.
-  if (isDmaBuf && !LocalDmaBuffer(source, sourceFd)) {
+  if (isDmaBuf && sourceAccess != HcmBufferAccess::kLocalDmaBuf) {
     return Status::kInvalidArgument;  // no readable local DMA-BUF
   }
   // A local DMA-BUF is a BufferDescriptor_t with offset <= size.

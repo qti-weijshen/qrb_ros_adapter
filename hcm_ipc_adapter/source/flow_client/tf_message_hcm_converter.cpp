@@ -20,12 +20,13 @@ namespace
 {
 
 /**
- * @brief How many transforms fit the descriptor's buffer from its offset on, and the fd to
- * sync around CPU access to it: -1 for heap memory, which needs no sync. InspectHcmBuffer()
- * reports an offset past the size as kUnusable, so the subtraction cannot wrap.
+ * @brief How many transforms fit the descriptor's buffer from its offset on. The flow client
+ * syncs the buffer around the conversion. InspectHcmBuffer() reports an offset past the size
+ * as kUnusable, so the subtraction cannot wrap.
  */
-bool BufferCapacity(const TFMessageHcmDescriptor & descriptor, std::size_t & capacity, int & fd)
+bool BufferCapacity(const TFMessageHcmDescriptor & descriptor, std::size_t & capacity)
 {
+  int fd = -1;
   const HcmBufferAccess access = InspectHcmBuffer(descriptor, fd);
   if (access != HcmBufferAccess::kLocalDmaBuf && access != HcmBufferAccess::kHostMemory)
     return false;
@@ -49,8 +50,7 @@ ConversionResult ConvertContractToHcm<TFMessageHcmContract, TFMessageHcmDescript
 
   const std::size_t count = static_cast<std::size_t>(message.transforms_size());
   std::size_t capacity = 0;
-  int fd = -1;
-  if (count > 0 && (!BufferCapacity(descriptor, capacity, fd) || count > capacity)) {
+  if (count > 0 && (!BufferCapacity(descriptor, capacity) || count > capacity)) {
     return ConversionResult::Failure(
         "HCM TFMessage descriptor buffer is missing or holds fewer "
         "than " +
@@ -71,8 +71,6 @@ ConversionResult ConvertContractToHcm<TFMessageHcmContract, TFMessageHcmDescript
       return ConversionResult::Failure(where + time.Diagnostic());
   }
 
-  if (BeginDmaBufCpuWrite(fd) != Status::kOk)
-    return ConversionResult::Failure("failed to begin CPU write to the HCM TFMessage buffer");
   // memcpy, since the host's offset need not align the array for direct access.
   auto * bytes = static_cast<std::uint8_t *>(count > 0 ? descriptor.GetDataPtr() : nullptr);
   for (std::size_t i = 0; i < count; ++i) {
@@ -84,8 +82,6 @@ ConversionResult ConvertContractToHcm<TFMessageHcmContract, TFMessageHcmDescript
     TransformToHcm(source.transform(), out.transform);
     std::memcpy(bytes + i * sizeof(out), &out, sizeof(out));
   }
-  if (EndDmaBufCpuWrite(fd) != Status::kOk)
-    return ConversionResult::Failure("failed to finish CPU write to the HCM TFMessage buffer");
   descriptor.transformCount = static_cast<std::uint32_t>(count);
   descriptor.validSize = TFMessageHcmDescriptor::CalcBufferSize(descriptor.transformCount);
   return ConversionResult::Success();
@@ -99,22 +95,15 @@ ConversionResult ConvertHcmToContract<TFMessageHcmContract, TFMessageHcmDescript
   message.Clear();
   const std::size_t count = descriptor.transformCount;
   std::size_t capacity = 0;
-  int fd = -1;
-  if (count > 0 && (!BufferCapacity(descriptor, capacity, fd) || count > capacity)) {
+  if (count > 0 && (!BufferCapacity(descriptor, capacity) || count > capacity)) {
     return ConversionResult::Failure(
         "HCM TFMessage transformCount exceeds the descriptor's buffer");
   }
 
-  // Copy the transforms out under CPU sync, then convert them without holding the buffer.
   std::vector<QRB::Memory::TransformStamped_t> transforms(count);
-  if (count > 0) {
-    if (BeginDmaBufCpuRead(fd) != Status::kOk)
-      return ConversionResult::Failure("failed to begin CPU read of the HCM TFMessage buffer");
+  if (count > 0)
     std::memcpy(transforms.data(), descriptor.GetDataPtr(),
         count * sizeof(QRB::Memory::TransformStamped_t));
-    if (EndDmaBufCpuRead(fd) != Status::kOk)
-      return ConversionResult::Failure("failed to finish CPU read of the HCM TFMessage buffer");
-  }
 
   message.mutable_transforms()->Reserve(static_cast<int>(count));
   for (std::size_t i = 0; i < count; ++i) {

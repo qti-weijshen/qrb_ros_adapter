@@ -13,6 +13,10 @@
 
 #include <exception>
 #include <iterator>
+#include <lib_mem_dmabuf/dmabuf.hpp>
+#include <memory>
+#include <type_traits>
+#include <utility>
 
 namespace qrb::adapter
 {
@@ -20,12 +24,43 @@ namespace qrb::adapter
 namespace
 {
 
+using DmaBufferPtr = std::shared_ptr<lib_mem_dmabuf::DmaBuffer>;
+
+template <typename T, typename = void>
+struct HasDataFdDmaBuffer : std::false_type
+{
+};
+
+template <typename T>
+struct HasDataFdDmaBuffer<T, std::void_t<decltype(std::declval<const T &>().data_fd)>>
+  : std::is_same<std::decay_t<decltype(std::declval<const T &>().data_fd)>, DmaBufferPtr>
+{
+};
+
+template <typename T, typename = void>
+struct HasDmabufDmaBuffer : std::false_type
+{
+};
+
+template <typename T>
+struct HasDmabufDmaBuffer<T, std::void_t<decltype(std::declval<const T &>().dmabuf)>>
+  : std::is_same<std::decay_t<decltype(std::declval<const T &>().dmabuf)>, DmaBufferPtr>
+{
+};
+
+template <typename T>
+inline constexpr bool kHasDmaBufPayload =
+    HasDataFdDmaBuffer<T>::value || HasDmabufDmaBuffer<T>::value;
+
 template <typename RosMessageT, typename ContractT, PayloadClass Payload>
 std::shared_ptr<RosFlowBridgeBase> CreateTypedRosFlowBridge(const char * nodeName,
     std::string_view contractTypeName,
     const rclcpp::NodeOptions & options,
     FlowTerminalCallback terminalCallback)
 {
+  static_assert(kHasDmaBufPayload<RosMessageT> == (Payload == PayloadClass::kDmaBuf),
+      "a DmaBuf mapping needs a ROS message with a DmaBuffer member (data_fd or dmabuf); "
+      "an Inline mapping must not have one");
   std::unique_ptr<RosFlowHandler> handler;
   if constexpr (Payload == PayloadClass::kInline) {
     handler = std::make_unique<InlineRosFlowHandler<RosMessageT, ContractT>>();

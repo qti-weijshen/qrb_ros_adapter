@@ -45,8 +45,8 @@ QRB_CONTRACT_MAPPING( TwistStamped,
     ::qrb::adapter::TwistHcmDescriptor,
     ::qrb::adapter::TwistRosMessage, "twist_bridge" )
 
-// The HCM descriptor keeps its transforms in a DMA buffer; across IPC they
-// travel inline, so ROS gets a plain message.
+// The HCM descriptor keeps its transforms in host storage (heap or a local
+// DMA-BUF); across IPC they travel inline, so ROS gets a plain message.
 QRB_CONTRACT_MAPPING( TFMessage,
     "qrb.contract.tf2.v1.TFMessage", Inline,
     ::qrb::contract::tf2::v1::TFMessage,

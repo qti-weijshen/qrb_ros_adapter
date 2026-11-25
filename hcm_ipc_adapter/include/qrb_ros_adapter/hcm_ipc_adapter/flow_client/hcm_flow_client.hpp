@@ -68,9 +68,10 @@ public:
    *
    * Called once per processed frame descriptor. On kOk the Contract message
    * has been converted into `target`. For a DMA-BUF Contract, the received
-   * payload is synchronously copied into the host-owned descriptor buffer
-   * and FETCH_COMPLETE is sent before this method returns, allowing the ROS
-   * peer to release the producer-owned source Buffer.
+   * payload is synchronously copied into the host-owned descriptor buffer,
+   * which may be heap memory or a local DMA-BUF, and FETCH_COMPLETE is sent
+   * before this method returns, allowing the ROS peer to release the
+   * producer-owned source Buffer.
    *
    * @return kOk (data converted), kBadState if not initialized, or a fatal
    *         Status that has closed the Session. Without a fresh ROS sample

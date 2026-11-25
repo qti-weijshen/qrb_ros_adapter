@@ -8,10 +8,14 @@
 
 #include <climits>
 #include <cstdint>
+#include <vector>
 
 #include "QC/Infras/Memory/BufferDescriptor.hpp"
+#include "qrb_ros_adapter/hcm_ipc_adapter/flow_client/point_cloud_hcm_converter.hpp"
 
 using namespace qrb::adapter;
+
+namespace sensor_proto = ::qrb::contract::sensor::v1;
 
 // UT-HCM-04: the inherited buffer is classified before the CPU touches it. Only a DMA-BUF of
 // this process is synced; heap memory and an fd of -1 are not.
@@ -70,4 +74,54 @@ TEST(HcmDmaBuffer, ClassifiesTheInheritedBufferAndSyncsOnlyDmaBufs)
   EXPECT_EQ(EndDmaBufCpuRead(-1), Status::kOk);
   EXPECT_EQ(BeginDmaBufCpuWrite(-1), Status::kOk);
   EXPECT_EQ(EndDmaBufCpuWrite(-1), Status::kOk);
+}
+
+// UT-HCM-06: a DmaBuf Contract may be received into heap storage. Such a target is
+// classified kHostMemory with no fd, and the PointCloud converter fills and reads it.
+TEST(HcmDmaBuffer, PointCloudDescriptorAcceptsHeapStorage)
+{
+  PointCloudHcmContract cloud;
+  cloud.mutable_header()->set_frame_id("lidar");
+  cloud.set_height(1);
+  cloud.set_width(4);
+  cloud.set_point_step(16);
+  cloud.set_row_step(64);
+  cloud.set_is_dense(true);
+  const char * names[] = {"x", "y", "z"};
+  for (std::uint32_t i = 0; i < 3; ++i) {
+    auto * field = cloud.add_fields();
+    field->set_name(names[i]);
+    field->set_offset(4 * i);
+    field->set_datatype(sensor_proto::POINT_FIELD_TYPE_FLOAT32);
+    field->set_count(1);
+  }
+
+  const std::vector<std::uint8_t> source(64, 0x5A);
+  std::vector<std::uint8_t> storage(256, 0);
+  PointCloudHcmDescriptor target;
+  target.pBuf = storage.data();
+  target.size = storage.size();
+  target.offset = 0;
+  target.allocatorType = QC::Memory::QC_MEMORY_ALLOCATOR_HEAP;
+
+  ASSERT_TRUE((ConvertContractToHcm<PointCloudHcmContract, PointCloudHcmDescriptor>(
+      cloud, DmaBufView{source.data(), source.size()}, target)));
+  EXPECT_EQ(target.validSize, 64u);
+  EXPECT_EQ(storage[0], 0x5A);
+
+  int fd = 0;
+  EXPECT_EQ(InspectHcmBuffer(target, fd), HcmBufferAccess::kHostMemory);
+  EXPECT_EQ(fd, -1);
+
+  PointCloudHcmContract back;
+  ASSERT_TRUE((ConvertHcmToContract<PointCloudHcmContract, PointCloudHcmDescriptor>(target, back)));
+  EXPECT_EQ(back.header().frame_id(), "lidar");
+  EXPECT_EQ(back.height(), 1u);
+  EXPECT_EQ(back.width(), 4u);
+  EXPECT_EQ(back.point_step(), 16u);
+  EXPECT_EQ(back.row_step(), 64u);
+  EXPECT_TRUE(back.is_dense());
+  ASSERT_EQ(back.fields_size(), 3);
+  EXPECT_EQ(back.fields(2).name(), "z");
+  EXPECT_EQ(back.fields(2).offset(), 8u);
 }
