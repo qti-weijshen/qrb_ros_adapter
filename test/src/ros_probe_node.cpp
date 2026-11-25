@@ -66,7 +66,7 @@ struct RosProbeSample
       "add a RosProbeSample<> for the new Contract in test/src/ros_probe_node.cpp");
 };
 
-// --- geometry.v1.PoseWithCovarianceStamped (inline) ---------------------------
+// --- geometry.v1.PoseWithCovarianceStamped (Inline) ---------------------------
 
 /** The probe fills the covariance; the pose is the identity. */
 template <>
@@ -116,7 +116,7 @@ struct RosProbeSample<adapter::PoseRosMessage>
   }
 };
 
-// --- nav.v1.Odometry (inline) -------------------------------------------------
+// --- nav.v1.Odometry (Inline) -------------------------------------------------
 
 /**
  * The probe fills the pose covariance; the pose is the identity,
@@ -177,7 +177,7 @@ struct RosProbeSample<adapter::OdometryRosMessage>
   }
 };
 
-// --- geometry.v1.TwistStamped (inline) ----------------------------------------
+// --- geometry.v1.TwistStamped (Inline) ----------------------------------------
 
 /**
  * The twist has no covariance, so the probe stamps its six values themselves,
@@ -237,7 +237,7 @@ struct RosProbeSample<adapter::TwistRosMessage>
   }
 };
 
-// --- tf2.v1.TFMessage (inline) ------------------------------------------------
+// --- tf2.v1.TFMessage (Inline) ------------------------------------------------
 
 /**
  * kTransforms transforms. The six translation and rotation x, y, z of the first

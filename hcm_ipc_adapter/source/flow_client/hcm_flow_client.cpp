@@ -489,7 +489,7 @@ Status HcmFlowClient::Publish(const QC::Memory::QCBufferDescriptorBase_t & sourc
   ++context_.framesOut;
 
   // PUBLISH_RESPONSE confirms that the ROS IPC Bridge copied any DMA-BUF payload out of
-  // host storage into ROS-owned storage and accepted the publish.
+  // host storage and accepted the publish.
   TransportHeader header;
   std::vector<std::uint8_t> payload;
   std::vector<OwnedFd> fds;

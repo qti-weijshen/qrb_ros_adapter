@@ -67,8 +67,9 @@ public:
    * @brief ROS_TO_HCM: one FETCH_REQUEST/FETCH_RESPONSE round trip.
    *
    * Called once per processed frame descriptor. On kOk the Contract message
-   * has been converted into `target`. For a DmaBuf Contract, the flow client
-   * wraps the converter call in DMA-BUF CPU sync: CPU read on the received
+   * has been converted into `target`. For any Contract whose host storage is a
+   * local DMA-BUF, the flow client wraps the converter call in DMA-BUF CPU sync:
+   * CPU read on the received
    * DMA-BUF, and CPU write on the DMA-BUF behind `target` if it has one (heap
    * storage needs no sync). The received payload is copied into host storage,
    * and FETCH_COMPLETE is sent before this method returns, allowing the ROS
@@ -90,14 +91,15 @@ public:
    * For a DmaBuf Contract, the descriptor's inherited dmaHandle and validSize
    * describe the host-storage payload buffer. The fd travels in the same frame
    * via SCM_RIGHTS, while the valid byte count is checked against the
-   * Contract. The flow client wraps the converter call in DMA-BUF CPU read
-   * sync on `source`; a failed sync is fatal. The caller and the host retain
-   * ownership of the buffer; the Adapter neither duplicates nor recycles it.
+   * Contract. For a local DMA-BUF source, the flow client wraps the converter
+   * call in DMA-BUF CPU read sync on `source`; a failed sync is fatal. The
+   * caller and the host retain ownership of the buffer; the Adapter neither
+   * duplicates nor recycles it.
    *
    * For an Inline Contract, leave the payload fields at their defaults.
    *
    * Awaits PUBLISH_RESPONSE. For a DmaBuf Contract, kOk means the ROS IPC
-   * Bridge has copied the payload into ROS-owned storage and accepted the
+   * Bridge has copied the payload out of host storage and accepted the
    * publish, so the host may synchronously reclaim its buffer when this call
    * returns.
    *

@@ -16,7 +16,7 @@ using TFMessageHcmDescriptor = QRB::Memory::TFMessageDescriptor_t;
 
 /**
  * The descriptor's transforms live in host storage (`pBuf` + `offset`), an array of
- * `transformCount` TransformStamped_t. The Contract carries them inline, so the IPC
+ * `transformCount` TransformStamped_t. The Contract carries them Inline, so the IPC
  * transfer needs no DMA-BUF. The flow client does the CPU sync around the converter
  * call, so the converter does not sync.
  */

@@ -44,10 +44,12 @@ public:
   /**
    * @brief Server side: create, bind and listen on `socketPath`.
    *
-   * The parent directory must already exist; Listen() does not create it. An
-   * existing path is removed only when it is a same-owner socket with no active
-   * listener. The created socket is mode 0660. Must be followed by Accept()
-   * (one Flow) or AcceptConnection() (bootstrap server).
+   * The parent directory must already exist; Listen() does not create it. The
+   * Bridge Manager creates `flows/` under the bootstrap socket's parent, so
+   * deployment creates that parent. An existing path is removed only when it is
+   * a same-owner socket with no active listener. The created socket is mode
+   * 0660. Must be followed by Accept() (one Flow) or AcceptConnection()
+   * (bootstrap server).
    */
   Status Listen(const std::string & socketPath);
 

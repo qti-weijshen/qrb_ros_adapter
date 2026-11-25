@@ -104,7 +104,7 @@ TEST(PointCloudRosConverter, MapsMetadataBindsTheDmaBufAndRejectsWhatItCannotBac
   ContractToRosPayload inbound(kCloudBytes);
   ASSERT_TRUE(PointCloudRosConversion::ContractToRos(contract, back, inbound));
   EXPECT_EQ(inbound.Size(), kCloudBytes);
-  EXPECT_EQ(back.data_fd, nullptr);  // the caller supplies the ROS-owned buffer
+  EXPECT_EQ(back.data_fd, nullptr);  // the caller supplies the host storage buffer
   const auto destination = MakeMemfdBuffer(kCloudBytes);
   ASSERT_TRUE(inbound.Assign(destination));
   EXPECT_EQ(back.data_fd, destination);

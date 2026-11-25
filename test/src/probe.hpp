@@ -15,7 +15,7 @@
 //
 // A sender writes the pattern once per buffer and per frame rewrites only the
 // header and the sentinel; a receiver checks both and one pattern word every
-// kSampleStride bytes. An inline Contract carries the same values as exact
+// kSampleStride bytes. An Inline Contract carries the same values as exact
 // integers in an array of doubles.
 //
 // The ROS side takes its parameters from the built-in defaults, a JSON
@@ -217,7 +217,7 @@ inline FrameReading CheckFrame(const std::uint8_t * data, std::size_t size, std:
   return reading;
 }
 
-// --- inline payloads -----------------------------------------------------------
+// --- Inline payloads -----------------------------------------------------------
 
 //
 // An array of doubles, e.g. a pose covariance, as

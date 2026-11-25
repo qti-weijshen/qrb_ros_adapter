@@ -454,9 +454,9 @@ Status RosFlowBridgeBase::HandlePublishRequest(const TransportHeader & header,
         "flow '%s': publish failed: %s", config_.flowId.c_str(), diagnostic.c_str());
   }
 
-  // Publish() returns only after any HCM payload has been copied
-  // into ROS-owned storage. Therefore this response is also the synchronous
-  // signal that the host may reclaim the HCM source buffer.
+  // Publish() returns only after any HCM payload has been copied out of host
+  // storage. Therefore this response is also the synchronous signal that the
+  // host may reclaim the HCM source buffer.
   Status sent = session_.SendStatusResponse(
       Operation::kPublishResponse, header.requestId, published, diagnostic);
   if (sent != Status::kOk) {
