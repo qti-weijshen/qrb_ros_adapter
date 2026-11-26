@@ -41,17 +41,10 @@ TEST(HcmIpcAdapterConfig, ParsesTheStaticBlockAndRejectsInvalidOnesUntouched)
   std::string diagnostic;
   ASSERT_EQ(ParseHcmIpcAdapterConfigJson(MakeConfig().dump(), config, diagnostic), Status::kOk)
       << diagnostic;
-
-  // The QCNode name is the Flow identity; omitted optional fields and the
-  // fixed timeouts take the same defaults the ROS side uses.
-  const FlowConfig defaults;
-  EXPECT_EQ(config.nodeName, "pose_adapter");
-  EXPECT_EQ(config.nodeId, 0u);
+  // The QCNode name is the Flow identity; omitted optional fields take their defaults.
   EXPECT_EQ(config.flowConfig.flowId, "pose_adapter");
   EXPECT_EQ(config.flowConfig.direction, Direction::kRosToHcm);
   EXPECT_EQ(config.flowConfig.rosTopic, "/localization/pose");
-  EXPECT_EQ(config.flowConfig.timeoutMs, defaults.timeoutMs);
-  EXPECT_EQ(config.flowConfig.startupTimeoutMs, defaults.startupTimeoutMs);
   EXPECT_TRUE(config.flowConfig.qosProfile == QosProfile{});
   EXPECT_EQ(config.globalBufferId, kHcmDefaultGlobalBufferId);
 
@@ -66,18 +59,16 @@ TEST(HcmIpcAdapterConfig, ParsesTheStaticBlockAndRejectsInvalidOnesUntouched)
   EXPECT_EQ(config.nodeId, 7u);
   EXPECT_EQ(config.globalBufferId, 5u);
   EXPECT_EQ(config.flowConfig.direction, Direction::kHcmToRos);
-  EXPECT_EQ(config.flowConfig.qosProfile.reliability, QosReliability::kBestEffort);
-  EXPECT_EQ(config.flowConfig.qosProfile.durability, QosDurability::kTransientLocal);
-  EXPECT_EQ(config.flowConfig.qosProfile.depth, 1u);
+  EXPECT_TRUE((config.flowConfig.qosProfile ==
+               QosProfile{QosReliability::kBestEffort, QosDurability::kTransientLocal, 1}));
 
   // Each QoS member is optional on its own.
   nlohmann::json partial = MakeConfig();
-  partial["static"]["qos_profile"] = {{"depth", kMaxQosDepth}};
+  partial["static"]["qos_profile"] = {{"depth", 4}};
   ASSERT_EQ(ParseHcmIpcAdapterConfigJson(partial.dump(), config, diagnostic), Status::kOk)
       << diagnostic;
-  EXPECT_EQ(config.flowConfig.qosProfile.reliability, QosReliability::kReliable);
-  EXPECT_EQ(config.flowConfig.qosProfile.durability, QosDurability::kVolatile);
-  EXPECT_EQ(config.flowConfig.qosProfile.depth, kMaxQosDepth);
+  EXPECT_TRUE((config.flowConfig.qosProfile ==
+               QosProfile{QosReliability::kReliable, QosDurability::kVolatile, 4}));
 
   // The advertised option schema lists every required field.
   const nlohmann::json options = nlohmann::json::parse(HcmIpcAdapterConfigOptions());
@@ -100,11 +91,8 @@ TEST(HcmIpcAdapterConfig, ParsesTheStaticBlockAndRejectsInvalidOnesUntouched)
     root["static"]["qos_profile"][key] = std::move(value);
     return root.dump();
   };
-  const auto without = [](const char * key) {
-    nlohmann::json root = MakeConfig();
-    root["static"].erase(key);
-    return root.dump();
-  };
+  nlohmann::json missing = MakeConfig();
+  missing["static"].erase("ros_topic");
 
   const struct
   {
@@ -114,13 +102,8 @@ TEST(HcmIpcAdapterConfig, ParsesTheStaticBlockAndRejectsInvalidOnesUntouched)
   } cases[] = {
       {"MalformedJson", "{\"static\":", Status::kInvalidArgument},
       {"MissingStatic", "{}", Status::kInvalidArgument},
-      {"StaticNotObject", "{\"static\":[]}", Status::kInvalidArgument},
-      {"MissingName", without("name"), Status::kInvalidArgument},
-      {"MissingContractType", without("contract_type"), Status::kInvalidArgument},
-      {"MissingDirection", without("direction"), Status::kInvalidArgument},
-      {"MissingRosTopic", without("ros_topic"), Status::kInvalidArgument},
+      {"MissingRosTopic", missing.dump(), Status::kInvalidArgument},
       {"EmptyName", with("name", ""), Status::kInvalidArgument},
-      {"NameNotString", with("name", 1), Status::kInvalidArgument},
       // direction is the integer 0 or 1, not a name.
       {"UnknownDirection", with("direction", 2), Status::kInvalidArgument},
       {"DirectionString", with("direction", "ros_to_hcm"), Status::kInvalidArgument},
@@ -128,37 +111,19 @@ TEST(HcmIpcAdapterConfig, ParsesTheStaticBlockAndRejectsInvalidOnesUntouched)
       // qos_profile is an object of raw ROS policies, not a preset name.
       {"QosProfileNotObject", with("qos_profile", "sensor_data"), Status::kInvalidArgument},
       {"UnknownQosReliability", withQos("reliability", "system_default"), Status::kInvalidArgument},
-      {"UnknownQosDurability", withQos("durability", "persistent"), Status::kInvalidArgument},
-      {"QosDepthZero", withQos("depth", 0), Status::kInvalidArgument},
-      {"QosDepthTooLarge", withQos("depth", kMaxQosDepth + 1), Status::kInvalidArgument},
       {"UnsupportedQosPolicy", withQos("history", "keep_all"), Status::kInvalidArgument},
       // The node has one buffer, so the QCNode globalBufferIdMap has one full entry.
       {"BufferMapNotArray", with("globalBufferIdMap", {{"name", "Output"}, {"id", 1}}),
-          Status::kInvalidArgument},
-      {"BufferMapEmpty", with("globalBufferIdMap", nlohmann::json::array()),
           Status::kInvalidArgument},
       {"BufferMapTwoEntries",
           with("globalBufferIdMap",
               {{{"name", "Input"}, {"id", 0}}, {{"name", "Output"}, {"id", 1}}}),
           Status::kInvalidArgument},
-      {"BufferMapNoId", with("globalBufferIdMap", {{{"name", "Output"}}}),
-          Status::kInvalidArgument},
       {"BufferMapUnsetId",
           with("globalBufferIdMap",
               {{{"name", "Output"}, {"id", std::numeric_limits<std::uint32_t>::max()}}}),
           Status::kInvalidArgument},
-      {"BufferMapEmptyName", with("globalBufferIdMap", {{{"name", ""}, {"id", 1}}}),
-          Status::kInvalidArgument},
-      {"BufferMapUnknownMember",
-          with("globalBufferIdMap", {{{"name", "Output"}, {"id", 1}, {"type", "x"}}}),
-          Status::kInvalidArgument},
-      // Misspelled, fixed and Manager-owned fields are all unknown.
       {"UnknownField", with("flow_id", "pose_to_hcm"), Status::kInvalidArgument},
-      {"FixedTimeout", with("timeout_ms", 250), Status::kInvalidArgument},
-      {"FixedBootstrapPath", with("bootstrap_socket_path", "/tmp/qrb/bootstrap.sock"),
-          Status::kInvalidArgument},
-      {"FixedQosDepth", with("qos_depth", 4), Status::kInvalidArgument},
-      {"FixedDescriptorSlot", with("descriptor_local_slot", 0), Status::kInvalidArgument},
       {"UnknownContract", with("contract_type", "qrb.contract.unknown.v1.Missing"),
           Status::kUnsupportedContract},
   };

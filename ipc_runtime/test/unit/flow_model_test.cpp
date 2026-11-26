@@ -31,15 +31,11 @@ const ContractDescriptor & PoseDescriptor()
 
 }  // namespace
 
-// One validator guards both ends of a Flow, and control-plane enums
-// survive the wire without an unknown value ever passing as success or a valid
-// setting.
-TEST(FlowConfigValidation, RejectsOutOfRangeFieldsAndUnknownWireValues)
+// ValidateFlowConfig accepts the limits, rejects each out-of-range field with a diagnostic, and
+// rejects unknown Direction and QoS values that arrive over the wire.
+TEST(FlowConfigValidation, RejectsOutOfRangeFields)
 {
   std::string diagnostic;
-  EXPECT_EQ(ValidateFlowConfig(MakeValidConfig(), PoseDescriptor(), diagnostic), Status::kOk)
-      << diagnostic;
-
   FlowConfig limits = MakeValidConfig();
   limits.timeoutMs = kMaxTimeoutMs;
   limits.startupTimeoutMs = kMaxStartupTimeoutMs;
@@ -58,17 +54,32 @@ TEST(FlowConfigValidation, RejectsOutOfRangeFieldsAndUnknownWireValues)
       {"TopicWithSpace", [](FlowConfig & c) { c.rosTopic = "/a b"; }, Status::kInvalidArgument},
       {"TimeoutBelowMin", [](FlowConfig & c) { c.timeoutMs = kMinTimeoutMs - 1; },
           Status::kInvalidArgument},
-      {"UnknownQosReliability",
-          [](FlowConfig & c) { c.qosProfile.reliability = static_cast<QosReliability>(2); },
-          Status::kInvalidArgument},
-      {"UnknownQosDurability",
-          [](FlowConfig & c) { c.qosProfile.durability = static_cast<QosDurability>(2); },
-          Status::kInvalidArgument},
       {"QosDepthZero", [](FlowConfig & c) { c.qosProfile.depth = 0; }, Status::kInvalidArgument},
       {"QosDepthAboveMax", [](FlowConfig & c) { c.qosProfile.depth = kMaxQosDepth + 1; },
           Status::kInvalidArgument},
       {"UnspecifiedDirection", [](FlowConfig & c) { c.direction = Direction::kUnspecified; },
           Status::kUnsupportedContract},
+      {"WireDirection",
+          [](FlowConfig & c) {
+            c.direction = FromProtoDirection(static_cast<ipc_proto::Direction>(99));
+          },
+          Status::kUnsupportedContract},
+      {"WireReliability",
+          [](FlowConfig & c) {
+            ipc_proto::QosProfile wire;
+            wire.set_reliability(static_cast<ipc_proto::QosReliability>(99));
+            wire.set_depth(10);
+            c.qosProfile = FromProtoQosProfile(wire);
+          },
+          Status::kInvalidArgument},
+      {"WireDurability",
+          [](FlowConfig & c) {
+            ipc_proto::QosProfile wire;
+            wire.set_durability(static_cast<ipc_proto::QosDurability>(99));
+            wire.set_depth(10);
+            c.qosProfile = FromProtoQosProfile(wire);
+          },
+          Status::kInvalidArgument},
   };
   for (const auto & c : cases) {
     SCOPED_TRACE(c.name);
@@ -79,47 +90,38 @@ TEST(FlowConfigValidation, RejectsOutOfRangeFieldsAndUnknownWireValues)
     EXPECT_FALSE(diagnostic.empty());
   }
 
+  ipc_proto::QosProfile wire;
+  const QosProfile qos{QosReliability::kBestEffort, QosDurability::kTransientLocal, 3};
+  ToProtoQosProfile(qos, wire);
+  const QosProfile back = FromProtoQosProfile(wire);
+  EXPECT_EQ(back.reliability, qos.reliability);
+  EXPECT_EQ(back.durability, qos.durability);
+  EXPECT_EQ(back.depth, qos.depth);
+}
+
+// Every Status keeps its class across the proto mapping and is exactly one of: success or no
+// data, a frame error, or fatal for the Flow.
+TEST(StatusMapping, ClassifiesEveryStatusAndSurvivesTheWire)
+{
   const Status all[] = {Status::kOk, Status::kNoData, Status::kInvalidArgument,
       Status::kUnsupportedContract, Status::kProtocolError, Status::kConversionError,
       Status::kResourceError, Status::kInternalError, Status::kVersionMismatch, Status::kTimeout,
       Status::kBadState};
   for (Status status : all) {
+    SCOPED_TRACE(ToString(status));
     const ipc_proto::StatusCode code = ToProtoStatusCode(status);
-    EXPECT_NE(code, ipc_proto::STATUS_CODE_UNSPECIFIED) << ToString(status);
+    EXPECT_NE(code, ipc_proto::STATUS_CODE_UNSPECIFIED);
     const Status back = FromProtoStatusCode(code);
-    EXPECT_EQ(IsOk(back), IsOk(status)) << ToString(status);
-    EXPECT_EQ(IsFatalForFlow(back), IsFatalForFlow(status)) << ToString(status);
-    EXPECT_EQ(IsFrameError(back), IsFrameError(status)) << ToString(status);
-    // Every Status is exactly one of: success or no data, a frame error, fatal.
+    EXPECT_EQ(IsOk(back), IsOk(status));
+    EXPECT_EQ(IsFatalForFlow(back), IsFatalForFlow(status));
+    EXPECT_EQ(IsFrameError(back), IsFrameError(status));
     const int kinds = (status == Status::kOk || status == Status::kNoData) + IsFrameError(status) +
                       IsFatalForFlow(status);
-    EXPECT_EQ(kinds, 1) << ToString(status);
+    EXPECT_EQ(kinds, 1);
   }
-  // kConversionError and kInvalidArgument are frame errors: they drop only the affected frame.
   EXPECT_TRUE(IsFrameError(Status::kConversionError));
   EXPECT_TRUE(IsFrameError(Status::kInvalidArgument));
   EXPECT_TRUE(IsFatalForFlow(Status::kProtocolError));
   EXPECT_TRUE(IsFatalForFlow(Status::kResourceError));
   EXPECT_EQ(FromProtoStatusCode(static_cast<ipc_proto::StatusCode>(99)), Status::kProtocolError);
-
-  // Unknown wire values must fail validation rather than silently become defaults.
-  FlowConfig config = MakeValidConfig();
-  config.direction = FromProtoDirection(static_cast<ipc_proto::Direction>(99));
-  EXPECT_NE(ValidateFlowConfig(config, PoseDescriptor(), diagnostic), Status::kOk);
-  ipc_proto::QosProfile wireQos;
-  ToProtoQosProfile(
-      QosProfile{QosReliability::kBestEffort, QosDurability::kTransientLocal, 3}, wireQos);
-  config = MakeValidConfig();
-  config.qosProfile = FromProtoQosProfile(wireQos);
-  EXPECT_EQ(config.qosProfile.reliability, QosReliability::kBestEffort);
-  EXPECT_EQ(config.qosProfile.durability, QosDurability::kTransientLocal);
-  EXPECT_EQ(config.qosProfile.depth, 3u);
-  wireQos.set_reliability(static_cast<ipc_proto::QosReliability>(99));
-  config.qosProfile = FromProtoQosProfile(wireQos);
-  EXPECT_EQ(ValidateFlowConfig(config, PoseDescriptor(), diagnostic), Status::kInvalidArgument);
-  wireQos = ipc_proto::QosProfile{};
-  wireQos.set_durability(static_cast<ipc_proto::QosDurability>(99));
-  wireQos.set_depth(10);
-  config.qosProfile = FromProtoQosProfile(wireQos);
-  EXPECT_EQ(ValidateFlowConfig(config, PoseDescriptor(), diagnostic), Status::kInvalidArgument);
 }
