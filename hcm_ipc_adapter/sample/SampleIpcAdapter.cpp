@@ -250,6 +250,11 @@ QCStatus_e SampleIpcAdapter::LoadAdapterConfig( const std::string &path, std::st
         QC_ERROR( "adapter_config %s has no \"static\" object: %s", path.c_str(), errors.c_str() );
         return QC_STATUS_BAD_ARGUMENTS;
     }
+    if ( !dt.Exists( "static.id" ) )
+    {
+        dt.Set<uint32_t>( "static.id", m_nodeId.id );
+        config = dt.Dump();
+    }
     m_contract = node.Get<std::string>( "contract_type", "" );
     m_isHcmToRos = ( 0 == node.Get<uint32_t>( "direction", 0 ) );
     std::vector<DataTree> map;
