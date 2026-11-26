@@ -19,9 +19,10 @@
  *
  * It prints the node state after each lifecycle call, the configuration read back through
  * GetConfigurationIfs() after Initialize(), and the monitoring and frame counts after Stop(). The
- * monitoring line gives the frames per second over the last kRateWindow frames, computed as
- * `ros2 topic hz` does. With log, it writes what it prints to that file too, each line after the
- * CLOCK_MONOTONIC time and the sample name, and a short monitoring line every kLogPeriod.
+ * monitoring line gives the frames per second over the last kRateWindow frames. With log, it
+ * writes what it prints to that file too, each line after the CLOCK_MONOTONIC time and the sample
+ * name, and every kLogPeriod a monitoring line of the frame, error and no-data counts, the
+ * average latency and the fps.
  *
  * Attributes:
  *   adapter_config: (optional) a file with the Adapter's static config; it replaces the six
@@ -138,7 +139,7 @@ static bool FitsDetections( const DescriptorT &descriptor, uint32_t count )
            ( descriptor.size >= descriptor.offset + DescriptorT::CalcBufferSize( count ) );
 }
 
-/** Frames per second over the last @p Window frames, the mean of their intervals inverted. */
+/** Frames per second over the last @p Window frames. */
 template<size_t Window>
 class FrameRate
 {
@@ -218,7 +219,10 @@ private:
     void Print( const std::string &line, bool logOnly = false );
     void PrintState( const char *call, QCStatus_e ret );
     void PrintConfig();
-    /** Print the monitoring line, or write its short form to the log with @p logOnly. */
+    /**
+     * Print the monitoring line; with @p logOnly, write it to the log without the session and the
+     * last, min and max latency.
+     */
     void PrintMonitor( bool logOnly );
     void SendFromTopic();
     void FetchToTopic();
@@ -294,8 +298,7 @@ private:
     static constexpr uint32_t kSampleDetections = 2;
 
     static constexpr uint32_t kPointStep = 3 * sizeof( float );
-    // An rgb8 image of kImageWidth, its rows ALIGN( width * 3, 16 ) apart as the QCNode Camera
-    // sample allocates them.
+    // An rgb8 image of kImageWidth, its rows ALIGN( width * 3, 16 ) apart.
     static constexpr uint32_t kImageWidth = 640;
     static constexpr uint32_t kImageStride = ( kImageWidth * 3 + 15 ) / 16 * 16;
     static constexpr uint64_t kMaxReportedErrors = 10;
@@ -540,7 +543,7 @@ QCStatus_e SampleIpcAdapter::Init( std::string name, SampleConfig_t &config )
 
     if ( ( QC_STATUS_OK == ret ) && !m_inputTopic.empty() )
     {
-        // FIFO and as deep as any pool, so that no frame of the publisher is dropped.
+        // FIFO, as deep as any pool.
         ret = m_sub.Init( name, m_inputTopic, ContractFramePool::kMaxSize, false );
     }
 
@@ -563,7 +566,7 @@ QCStatus_e SampleIpcAdapter::SetupFrames()
     }
     if ( m_isHcmToRos && !IsFilledContract() )
     {
-        // FillFrame() knows no other descriptor, and an unfilled one is rejected every frame.
+        // FillFrame() fills only kFilledContracts.
         QC_ERROR( "without input_topic, the sample sends only the Contracts it fills; send %s "
                   "frames on input_topic, for example from the StreamProbe sample",
                   m_contract.c_str() );
@@ -729,8 +732,8 @@ void SampleIpcAdapter::FillFrame( ContractFrame &frame )
         vector3->vector.z = -1.0;
     }
 
-    // The records of the two detections go into the DMA-BUF of the frame once, as the points of
-    // a cloud do; UpdateFrame() only moves the stamp.
+    // The records of the two detections go into the DMA-BUF of the frame once; UpdateFrame() only
+    // moves the stamp.
     auto *detections2d =
             dynamic_cast<QRB::Memory::ObjectDetection2dDescriptor_t *>( &frame.Descriptor() );
     if ( ( nullptr != detections2d ) && FitsDetections( *detections2d, kSampleDetections ) )

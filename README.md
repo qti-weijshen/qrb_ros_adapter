@@ -115,9 +115,8 @@ ROS probe of the [Test](#test) takes `<setting>:=<value>` on its launch.
 | `log` | | IpcAdapter, ROS probe: text log file. IpcAdapter writes what it prints and a monitor line every 10 s. |
 
 Each line of the `IpcAdapter` log starts with the CLOCK_MONOTONIC time and the
-sample name. `fps` is the rate of the last 10000 frames, as `ros2 topic hz`
-computes it; the monitor line printed at Stop also gives `sessionConnected` and
-the last, min and max latency.
+sample name. `fps` is the rate of the last 10000 frames; the monitor line
+printed at Stop also gives `sessionConnected` and the last, min and max latency.
 
 ```text
 [28087.995013214] [adapter]: monitor: frameCount=300, errorCount=0, averageLatencyNs=89399, noDataCount=0, fps=30.00
