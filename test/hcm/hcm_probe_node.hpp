@@ -42,7 +42,7 @@ namespace qrb::adapter::stream_probe
 
 /**
  * @brief The probe's type in QCNodeFactory. In libQCNode.so the Demo node is
- * CUSTOM_0 and the IPC Adapter Node is CUSTOM_1.
+ * CUSTOM_0 and the IPC Adapter Node is CUSTOM_3.
  */
 constexpr QC::QCNodeType_e kHcmStreamProbeNodeType = QC::QC_NODE_TYPE_CUSTOM_2;
 

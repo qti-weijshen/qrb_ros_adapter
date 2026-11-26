@@ -17,7 +17,7 @@
 #include "qrb_ros_adapter/hcm_ipc_adapter/ipc_adapter_node/hcm_ipc_adapter_config.hpp"
 
 /** QCNodeFactory node type of the IPC Adapter Node, which is built into libQCNode.so. */
-#define QC_NODE_TYPE_IPC_ADAPTER QC::QC_NODE_TYPE_CUSTOM_1
+#define QC_NODE_TYPE_IPC_ADAPTER QC::QC_NODE_TYPE_CUSTOM_3
 
 namespace qrb::adapter
 {
