@@ -23,6 +23,19 @@ ARGUMENTS = {
     'warmup': 'seconds a receiver does not measure',
     'log': 'text log file',
 }
+# A launch argument is a string; the probe takes these as numbers only.
+NUMBERS = {'fps', 'payload_bytes', 'duration', 'warmup'}
+
+
+def typed(name, value):
+    if name not in NUMBERS:
+        return value
+    for number in (int, float):
+        try:
+            return number(value)
+        except ValueError:
+            pass
+    return value  # the probe names the argument that is not a number
 
 
 def load_probe(context):
@@ -30,7 +43,7 @@ def load_probe(context):
     for name in ARGUMENTS:
         value = LaunchConfiguration(name).perform(context)
         if value:
-            parameters[name] = value
+            parameters[name] = typed(name, value)
     return [
         LoadComposableNodes(
             target_container='/qrb_ros_adapter_container',
