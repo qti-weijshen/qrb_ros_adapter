@@ -19,9 +19,9 @@
  *
  * It prints the node state after each lifecycle call, the configuration read back through
  * GetConfigurationIfs() after Initialize(), and the monitoring and frame counts after Stop(). The
- * monitoring line ends with the frames per second over the last kRateWindow frames, computed as
- * `ros2 topic hz` does. With log, it writes what it prints to that file too, and the monitoring
- * line every kLogPeriod, each line as ROS 2 prints one (see SampleLog).
+ * monitoring line gives the frames per second over the last kRateWindow frames, computed as
+ * `ros2 topic hz` does. With log, it writes what it prints to that file too, each line after the
+ * CLOCK_MONOTONIC time and the sample name, and a short monitoring line every kLogPeriod.
  *
  * Attributes:
  *   adapter_config: (optional) a file with the Adapter's static config; it replaces the six
@@ -44,7 +44,7 @@
  *                   Detection3DArray, the buffer that holds the two detections the sample sends
  *   buffer_bytes  : (optional) direction 1, for a DmaBuf Contract and for the detections: size of
  *                   the DMA buffer the sample receives into, default 33554432
- *   log           : (optional) a text log file of this sample only, default none
+ *   log           : (optional) a text log file, default none
  */
 
 #include "ContractFrame.hpp"
@@ -78,7 +78,6 @@
 #include <fstream>
 #include <memory>
 #include <mutex>
-#include <set>
 #include <sstream>
 #include <thread>
 
@@ -195,105 +194,6 @@ __attribute__( ( format( printf, 1, 2 ) ) ) static std::string Text( const char 
     return text;
 }
 
-/**
- * The log setting: Print() prints "<name> <text>" and writes it to the file, Write() only writes
- * it there. A file line is a ROS 2 console line, "[INFO] [<seconds>.<nanoseconds>] [<name>]:
- * <text>", with the CLOCK_MONOTONIC time, the clock of the ROS probe's log. A file takes the lines
- * of one sample: a path another sample of the process has open is refused.
- */
-class SampleLog
-{
-public:
-    static constexpr const char *kInfo = "INFO";
-    static constexpr const char *kError = "ERROR";
-
-    ~SampleLog() { Close(); }
-
-    /** Open the file at @p path for the lines of @p name; "" opens none. */
-    bool Open( const std::string &path, const std::string &name )
-    {
-        Close();
-        std::lock_guard<std::mutex> lock( m_mutex );
-        m_name = name;
-        if ( path.empty() )
-        {
-            return true;
-        }
-        Paths &paths = OpenPaths();
-        std::lock_guard<std::mutex> pathsLock( paths.mutex );
-        if ( paths.open.count( path ) != 0 )
-        {
-            return false;
-        }
-        m_fp = fopen( path.c_str(), "w" );
-        if ( nullptr != m_fp )
-        {
-            m_path = path;
-            (void) paths.open.insert( path );
-        }
-        return nullptr != m_fp;
-    }
-
-    void Close()
-    {
-        std::lock_guard<std::mutex> lock( m_mutex );
-        if ( nullptr != m_fp )
-        {
-            (void) fclose( m_fp );
-            m_fp = nullptr;
-            Paths &paths = OpenPaths();
-            std::lock_guard<std::mutex> pathsLock( paths.mutex );
-            (void) paths.open.erase( m_path );
-        }
-    }
-
-    bool IsOpen() const
-    {
-        std::lock_guard<std::mutex> lock( m_mutex );
-        return nullptr != m_fp;
-    }
-
-    /** Print the line of @p level and write it to the file. */
-    void Print( const char *level, const std::string &text )
-    {
-        (void) printf( "%s %s\n", m_name.c_str(), text.c_str() );
-        Write( level, text );
-    }
-
-    void Write( const char *level, const std::string &text )
-    {
-        std::lock_guard<std::mutex> lock( m_mutex );
-        if ( nullptr == m_fp )
-        {
-            return;
-        }
-        timespec now{};
-        (void) clock_gettime( CLOCK_MONOTONIC, &now );
-        (void) fprintf( m_fp, "[%s] [%lld.%09ld] [%s]: %s\n", level, (long long) now.tv_sec,
-                        (long) now.tv_nsec, m_name.c_str(), text.c_str() );
-        (void) fflush( m_fp );
-    }
-
-private:
-    struct Paths
-    {
-        std::mutex mutex;
-        std::set<std::string> open;
-    };
-
-    /** The paths the samples of the process have open. */
-    static Paths &OpenPaths()
-    {
-        static Paths s_paths;
-        return s_paths;
-    }
-
-    mutable std::mutex m_mutex;
-    std::string m_name;
-    std::string m_path;
-    FILE *m_fp = nullptr;
-};
-
 class SampleIpcAdapter : public SampleIF
 {
 public:
@@ -314,9 +214,11 @@ private:
     void UpdateFrame( ContractFrame &frame );
     QCStatus_e Process( ContractFrame &frame );
     bool GetMonitor( qrb::adapter::HcmIpcAdapterMonitoringData &monitor );
+    /** Print @p line, and write it to the log; with @p logOnly, only write it there. */
+    void Print( const std::string &line, bool logOnly = false );
     void PrintState( const char *call, QCStatus_e ret );
     void PrintConfig();
-    /** Print the monitoring line, or only write it to the log with @p logOnly. */
+    /** Print the monitoring line, or write its short form to the log with @p logOnly. */
     void PrintMonitor( bool logOnly );
     void SendFromTopic();
     void FetchToTopic();
@@ -353,7 +255,7 @@ private:
     static constexpr size_t kRateWindow = 10000;
     static constexpr auto kLogPeriod = std::chrono::seconds( 10 );
     FrameRate<kRateWindow> m_rate;
-    SampleLog m_log;
+    FILE *m_log = nullptr;
     std::thread m_logThread;
     std::mutex m_logMutex;
     std::condition_variable m_logWake;
@@ -545,10 +447,14 @@ QCStatus_e SampleIpcAdapter::Init( std::string name, SampleConfig_t &config )
     if ( QC_STATUS_OK == ret )
     {
         std::string log = Get( config, "log", "" );
-        if ( !m_log.Open( log, m_name ) )
+        if ( !log.empty() )
         {
-            QC_ERROR( "cannot open log %s, or another sample writes it", log.c_str() );
-            ret = QC_STATUS_BAD_ARGUMENTS;
+            m_log = fopen( log.c_str(), "w" );
+            if ( nullptr == m_log )
+            {
+                QC_ERROR( "cannot open log %s", log.c_str() );
+                ret = QC_STATUS_BAD_ARGUMENTS;
+            }
         }
     }
 
@@ -1065,7 +971,7 @@ QCStatus_e SampleIpcAdapter::Start()
         m_stop = false;
         m_rate.Clear();
         m_thread = std::thread( &SampleIpcAdapter::ThreadMain, this );
-        if ( m_log.IsOpen() )
+        if ( nullptr != m_log )
         {
             m_logThread = std::thread( &SampleIpcAdapter::LogMain, this );
         }
@@ -1084,34 +990,45 @@ bool SampleIpcAdapter::GetMonitor( qrb::adapter::HcmIpcAdapterMonitoringData &mo
     return QC_STATUS_OK == m_node->GetMonitoringIfs().Place( &monitor, size );
 }
 
+void SampleIpcAdapter::Print( const std::string &line, bool logOnly )
+{
+    if ( !logOnly )
+    {
+        (void) printf( "%s %s\n", m_name.c_str(), line.c_str() );
+    }
+    if ( nullptr != m_log )
+    {
+        timespec now{};
+        (void) clock_gettime( CLOCK_MONOTONIC, &now );
+        (void) fprintf( m_log, "[%lld.%09ld] [%s]: %s\n", (long long) now.tv_sec,
+                        (long) now.tv_nsec, m_name.c_str(), line.c_str() );
+        (void) fflush( m_log );
+    }
+}
+
 void SampleIpcAdapter::PrintState( const char *call, QCStatus_e ret )
 {
-    m_log.Print(
-            ( QC_STATUS_OK == ret ) ? SampleLog::kInfo : SampleLog::kError,
-            Text( "%s returned %d, state %s", call, (int) ret, StateName( m_node->GetState() ) ) );
+    Print( Text( "%s returned %d, state %s", call, (int) ret, StateName( m_node->GetState() ) ) );
 }
 
 void SampleIpcAdapter::PrintConfig()
 {
     QCNodeConfigIfs &configIfs = m_node->GetConfigurationIfs();
     const QCNodeConfigBase_t &base = configIfs.Get();
-    m_log.Print( SampleLog::kInfo,
-                 Text( "config: name=%s  type=%d  id=%u", base.nodeId.name.c_str(),
-                       (int) base.nodeId.type, (unsigned) base.nodeId.id ) );
+    Print( Text( "config: name=%s, type=%d, id=%u", base.nodeId.name.c_str(),
+                 (int) base.nodeId.type, (unsigned) base.nodeId.id ) );
     auto *config = dynamic_cast<qrb::adapter::HcmIpcAdapterNodeConfig *>( &configIfs );
     if ( nullptr != config )
     {
         const qrb::adapter::HcmIpcAdapterConfig &adapter = config->Adapter();
         const qrb::adapter::FlowConfig &flow = adapter.flowConfig;
-        const long long direction = (long long) qrb::adapter::ToDirectionCode( flow.direction );
-        m_log.Print( SampleLog::kInfo,
-                     Text( "flow: contract_type=%s  direction=%lld (%s)  ros_topic=%s  "
-                           "qos=%s/%s/%u  global_buffer_id=%u",
-                           flow.contractTypeName.c_str(), direction,
-                           ( 0 == direction ) ? "HCM to ROS" : "ROS to HCM", flow.rosTopic.c_str(),
-                           qrb::adapter::ToString( flow.qosProfile.reliability ),
-                           qrb::adapter::ToString( flow.qosProfile.durability ),
-                           flow.qosProfile.depth, adapter.globalBufferId ) );
+        Print( Text( "flow: contract_type=%s, direction=%lld, ros_topic=%s, reliability=%s, "
+                     "durability=%s, depth=%u, global_buffer_id=%u",
+                     flow.contractTypeName.c_str(),
+                     (long long) qrb::adapter::ToDirectionCode( flow.direction ),
+                     flow.rosTopic.c_str(), qrb::adapter::ToString( flow.qosProfile.reliability ),
+                     qrb::adapter::ToString( flow.qosProfile.durability ), flow.qosProfile.depth,
+                     adapter.globalBufferId ) );
     }
 }
 
@@ -1120,23 +1037,22 @@ void SampleIpcAdapter::PrintMonitor( bool logOnly )
     qrb::adapter::HcmIpcAdapterMonitoringData monitor{};
     if ( GetMonitor( monitor ) )
     {
-        auto ms = []( uint64_t ns ) { return (double) ns / 1e6; };
-        const std::string line =
-                Text( "monitor: fps=%.2f  frameCount=%llu  errorCount=%llu  noDataCount=%llu  "
-                      "sessionConnected=%u  latencyMs avg=%.3f last=%.3f min=%.3f max=%.3f",
-                      m_rate.Get(), (unsigned long long) monitor.frameCount,
-                      (unsigned long long) monitor.errorCount,
-                      (unsigned long long) monitor.noDataCount, (unsigned) monitor.sessionConnected,
-                      ms( monitor.averageLatencyNs ), ms( monitor.lastLatencyNs ),
-                      ms( monitor.minLatencyNs ), ms( monitor.maxLatencyNs ) );
-        if ( logOnly )
+        std::string line = Text(
+                "monitor: frameCount=%llu, errorCount=%llu, averageLatencyNs=%llu, "
+                "noDataCount=%llu, fps=%.2f",
+                (unsigned long long) monitor.frameCount, (unsigned long long) monitor.errorCount,
+                (unsigned long long) monitor.averageLatencyNs,
+                (unsigned long long) monitor.noDataCount, m_rate.Get() );
+        if ( !logOnly )
         {
-            m_log.Write( SampleLog::kInfo, line );
+            line += Text( ", sessionConnected=%u, lastLatencyNs=%llu, minLatencyNs=%llu, "
+                          "maxLatencyNs=%llu",
+                          (unsigned) monitor.sessionConnected,
+                          (unsigned long long) monitor.lastLatencyNs,
+                          (unsigned long long) monitor.minLatencyNs,
+                          (unsigned long long) monitor.maxLatencyNs );
         }
-        else
-        {
-            m_log.Print( SampleLog::kInfo, line );
-        }
+        Print( line, logOnly );
     }
 }
 
@@ -1152,8 +1068,6 @@ QCStatus_e SampleIpcAdapter::Process( ContractFrame &frame )
         if ( m_errorCount <= kMaxReportedErrors )
         {
             QC_ERROR( "ProcessFrameDescriptor failed: %d", ret );
-            m_log.Write( SampleLog::kError,
-                         Text( "ProcessFrameDescriptor failed: %d", (int) ret ) );
         }
     }
     else if ( false == m_isHcmToRos )
@@ -1293,14 +1207,11 @@ QCStatus_e SampleIpcAdapter::Stop()
     if ( QC_STATUS_OK != ret )
     {
         QC_ERROR( "failed to stop the IPC Adapter node: %d", ret );
-        m_log.Write( SampleLog::kError,
-                     Text( "failed to stop the IPC Adapter node: %d", (int) ret ) );
     }
     PrintMonitor( false );
-    m_log.Print( ( 0 == m_errorCount ) ? SampleLog::kInfo : SampleLog::kError,
-                 Text( "%s %llu frames, %llu errors, every frame held %llu times",
-                       m_isHcmToRos ? "sent" : "received", (unsigned long long) m_frames,
-                       (unsigned long long) m_errorCount, (unsigned long long) m_poolExhausted ) );
+    Print( Text( "%s %llu frames, %llu errors, every frame held %llu times",
+                 m_isHcmToRos ? "sent" : "received", (unsigned long long) m_frames,
+                 (unsigned long long) m_errorCount, (unsigned long long) m_poolExhausted ) );
     if ( ( QC_STATUS_OK == ret ) && ( 0 != m_errorCount ) )
     {
         ret = QC_STATUS_FAIL;
@@ -1320,7 +1231,11 @@ QCStatus_e SampleIpcAdapter::Deinit()
         m_node.reset();
     }
     m_pool.Clear();
-    m_log.Close();
+    if ( nullptr != m_log )
+    {
+        (void) fclose( m_log );
+        m_log = nullptr;
+    }
 
     return ret;
 }

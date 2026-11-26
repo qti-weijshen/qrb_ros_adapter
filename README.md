@@ -112,14 +112,15 @@ ROS probe of the [Test](#test) takes `<setting>:=<value>` on its launch.
 | `fps` | `30` | All: frames per second a sender sends, `0` for no pause. |
 | `payload_bytes` | `1048576` | All: DMA-BUF payload of a DmaBuf Contract a sender sends. |
 | `duration` | `0` | ROS probe: seconds to run, `0` until stopped. |
-| `log` | | IpcAdapter, ROS probe: text log file, one per sample. IpcAdapter writes what it prints and its monitor line every 10 s. |
+| `log` | | IpcAdapter, ROS probe: text log file. IpcAdapter writes what it prints and a monitor line every 10 s. |
 
-The monitor line of `IpcAdapter` starts with `fps`, the rate of its last 10000
-frames as `ros2 topic hz` computes it. Its log lines look like ROS 2 console
-lines, with CLOCK_MONOTONIC time, the clock of the ROS probe's log:
+Each line of the `IpcAdapter` log starts with the CLOCK_MONOTONIC time and the
+sample name. `fps` is the rate of the last 10000 frames, as `ros2 topic hz`
+computes it; the monitor line printed at Stop also gives `sessionConnected` and
+the last, min and max latency.
 
 ```text
-[INFO] [28087.995013214] [adapter]: monitor: fps=30.00  frameCount=300  errorCount=0  ...
+[28087.995013214] [adapter]: monitor: frameCount=300, errorCount=0, averageLatencyNs=89399, noDataCount=0, fps=30.00
 ```
 
 ## Build from source
