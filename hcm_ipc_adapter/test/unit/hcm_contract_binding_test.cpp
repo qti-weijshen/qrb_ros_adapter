@@ -5,23 +5,11 @@
 
 #include <memory>
 #include <string>
-#include <string_view>
 #include <vector>
 
-#include "qrb_ros_adapter/hcm_ipc_adapter/flow_client/detection_2d_hcm_converter.hpp"
-#include "qrb_ros_adapter/hcm_ipc_adapter/flow_client/detection_3d_hcm_converter.hpp"
+#include "qrb_ros_adapter/hcm_ipc_adapter/flow_client/hcm_contract_registry.hpp"
 #include "qrb_ros_adapter/hcm_ipc_adapter/flow_client/hcm_converters.hpp"
-#include "qrb_ros_adapter/hcm_ipc_adapter/flow_client/image_hcm_converter.hpp"
-#include "qrb_ros_adapter/hcm_ipc_adapter/flow_client/imu_hcm_converter.hpp"
-#include "qrb_ros_adapter/hcm_ipc_adapter/flow_client/joint_state_hcm_converter.hpp"
-#include "qrb_ros_adapter/hcm_ipc_adapter/flow_client/odometry_hcm_converter.hpp"
-#include "qrb_ros_adapter/hcm_ipc_adapter/flow_client/point_cloud_hcm_converter.hpp"
-#include "qrb_ros_adapter/hcm_ipc_adapter/flow_client/pose_array_hcm_converter.hpp"
-#include "qrb_ros_adapter/hcm_ipc_adapter/flow_client/pose_hcm_converter.hpp"
-#include "qrb_ros_adapter/hcm_ipc_adapter/flow_client/pose_stamped_hcm_converter.hpp"
-#include "qrb_ros_adapter/hcm_ipc_adapter/flow_client/tf_message_hcm_converter.hpp"
-#include "qrb_ros_adapter/hcm_ipc_adapter/flow_client/twist_hcm_converter.hpp"
-#include "qrb_ros_adapter/hcm_ipc_adapter/flow_client/vector3_stamped_hcm_converter.hpp"
+#include "qrb_ros_adapter/ipc_runtime/contract_descriptor_registry.hpp"
 
 using namespace qrb::adapter;
 
@@ -63,143 +51,51 @@ TEST(HcmContractBinding, EveryContractHasOneCompleteBindingAndAMatchingFactory)
   EXPECT_EQ(CreateQrbBufferDescriptor("qrb.contract.unknown.v1.Missing", descriptor),
       QC::QC_STATUS_UNSUPPORTED);
   EXPECT_EQ(descriptor, nullptr);
-
-  // A binding never accepts or converts another Contract's descriptor.
-  const HcmContractBinding & pose = *FindHcmContractBinding(kPoseWithCovarianceStampedContractType);
-  PointCloudHcmDescriptor cloudDescriptor;
-  PoseHcmContract poseContract;
-  EXPECT_FALSE(pose.acceptsDescriptor(cloudDescriptor));
-  EXPECT_FALSE(pose.contractToHcm(poseContract, DmaBufView{}, cloudDescriptor));
-  EXPECT_FALSE(pose.hcmToContract(cloudDescriptor, poseContract));
-
-  // Inline Contracts do not take each other's descriptors, even when their shapes are similar.
-  const HcmContractBinding & odom = *FindHcmContractBinding(kOdometryContractType);
-  OdometryHcmDescriptor odomDescriptor;
-  PoseHcmDescriptor poseDescriptor;
-  OdometryHcmContract odomContract;
-  EXPECT_TRUE(odom.acceptsDescriptor(odomDescriptor));
-  EXPECT_FALSE(odom.acceptsDescriptor(poseDescriptor));
-  EXPECT_FALSE(pose.acceptsDescriptor(odomDescriptor));
-  EXPECT_FALSE(odom.contractToHcm(odomContract, DmaBufView{}, poseDescriptor));
-  EXPECT_FALSE(odom.hcmToContract(poseDescriptor, odomContract));
-
-  // Each Inline Contract binding rejects the other Inline descriptors.
-  const HcmContractBinding & twist = *FindHcmContractBinding(kTwistStampedContractType);
-  TwistHcmDescriptor twistDescriptor;
-  TwistHcmContract twistContract;
-  EXPECT_TRUE(twist.acceptsDescriptor(twistDescriptor));
-  EXPECT_FALSE(twist.acceptsDescriptor(odomDescriptor));
-  EXPECT_FALSE(odom.acceptsDescriptor(twistDescriptor));
-  EXPECT_FALSE(twist.contractToHcm(twistContract, DmaBufView{}, odomDescriptor));
-  EXPECT_FALSE(twist.hcmToContract(odomDescriptor, twistContract));
-
-  // Each Inline Contract binding rejects the other Inline descriptors.
-  const HcmContractBinding & tf = *FindHcmContractBinding(kTFMessageContractType);
-  TFMessageHcmDescriptor tfDescriptor;
-  TFMessageHcmContract tfContract;
-  EXPECT_TRUE(tf.acceptsDescriptor(tfDescriptor));
-  EXPECT_FALSE(tf.acceptsDescriptor(twistDescriptor));
-  EXPECT_FALSE(twist.acceptsDescriptor(tfDescriptor));
-  EXPECT_FALSE(tf.contractToHcm(tfContract, DmaBufView{}, twistDescriptor));
-  EXPECT_FALSE(tf.hcmToContract(twistDescriptor, tfContract));
-
-  // Image and PointCloud are both DMA-BUF Buffer descriptors; neither takes the other's.
-  const HcmContractBinding & image = *FindHcmContractBinding(kImageContractType);
-  const HcmContractBinding & cloud = *FindHcmContractBinding(kPointCloudContractType);
-  ImageHcmDescriptor imageDescriptor;
-  ImageHcmContract imageContract;
-  EXPECT_TRUE(image.acceptsDescriptor(imageDescriptor));
-  EXPECT_FALSE(image.acceptsDescriptor(cloudDescriptor));
-  EXPECT_FALSE(cloud.acceptsDescriptor(imageDescriptor));
-  EXPECT_FALSE(image.contractToHcm(imageContract, DmaBufView{}, cloudDescriptor));
-  EXPECT_FALSE(image.hcmToContract(cloudDescriptor, imageContract));
-
-  // The 2-D and 3-D detection descriptors share a base class and a buffer type, but a binding
-  // takes only its own.
-  const HcmContractBinding & detection2d = *FindHcmContractBinding(kDetection2DArrayContractType);
-  const HcmContractBinding & detection3d = *FindHcmContractBinding(kDetection3DArrayContractType);
-  Detection2DHcmDescriptor descriptor2d;
-  Detection3DHcmDescriptor descriptor3d;
-  Detection2DHcmContract contract2d;
-  Detection3DHcmContract contract3d;
-  EXPECT_TRUE(detection2d.acceptsDescriptor(descriptor2d));
-  EXPECT_FALSE(detection2d.acceptsDescriptor(descriptor3d));
-  EXPECT_TRUE(detection3d.acceptsDescriptor(descriptor3d));
-  EXPECT_FALSE(detection3d.acceptsDescriptor(descriptor2d));
-  EXPECT_FALSE(detection2d.contractToHcm(contract2d, DmaBufView{}, descriptor3d));
-  EXPECT_FALSE(detection2d.hcmToContract(descriptor3d, contract2d));
-  EXPECT_FALSE(detection3d.contractToHcm(contract3d, DmaBufView{}, descriptor2d));
-  EXPECT_FALSE(detection3d.hcmToContract(descriptor2d, contract3d));
-  EXPECT_FALSE(detection2d.contractToHcm(contract3d, DmaBufView{}, descriptor2d));
-  // JointState and TFMessage share CUSTOM_4, but their C++ descriptors are distinct.
-  const HcmContractBinding & joints = *FindHcmContractBinding(kJointStateContractType);
-  JointStateHcmDescriptor jointDescriptor;
-  JointStateHcmContract jointContract;
-  EXPECT_TRUE(joints.acceptsDescriptor(jointDescriptor));
-  EXPECT_FALSE(joints.acceptsDescriptor(tfDescriptor));
-  EXPECT_FALSE(tf.acceptsDescriptor(jointDescriptor));
-  EXPECT_FALSE(joints.contractToHcm(jointContract, DmaBufView{}, tfDescriptor));
-  EXPECT_FALSE(joints.hcmToContract(tfDescriptor, jointContract));
-
-  // Imu and Twist are both inline sensor contracts; neither takes the other's
-  // descriptor.
-  const HcmContractBinding & imu = *FindHcmContractBinding(kImuContractType);
-  ImuHcmDescriptor imuDescriptor;
-  ImuHcmContract imuContract;
-  EXPECT_TRUE(imu.acceptsDescriptor(imuDescriptor));
-  EXPECT_FALSE(imu.acceptsDescriptor(twistDescriptor));
-  EXPECT_FALSE(twist.acceptsDescriptor(imuDescriptor));
-  EXPECT_FALSE(imu.contractToHcm(imuContract, DmaBufView{}, twistDescriptor));
-  EXPECT_FALSE(imu.hcmToContract(twistDescriptor, imuContract));
 }
 
 namespace
 {
 
-/** @brief One inline geometry Contract, and a Contract message and descriptor of its own. */
-struct GeometryEntry
+/** @brief One Contract, with a Contract message and a descriptor of its own types. */
+struct BindingEntry
 {
-  std::string_view contractType;
+  std::string contractType;
   std::unique_ptr<google::protobuf::MessageLite> contract;
   std::unique_ptr<QC::Memory::QCBufferDescriptorBase_t> descriptor;
 };
 
 template <typename ContractT, typename DescriptorT>
-GeometryEntry MakeGeometryEntry(std::string_view contractType)
+BindingEntry MakeBindingEntry(const char * contractType)
 {
-  return GeometryEntry{
-      contractType, std::make_unique<ContractT>(), std::make_unique<DescriptorT>()};
+  return BindingEntry{contractType, std::make_unique<ContractT>(), std::make_unique<DescriptorT>()};
+}
+
+std::vector<BindingEntry> MakeEveryBindingEntry()
+{
+  std::vector<BindingEntry> entries;
+#define QRB_CONTRACT_MAPPING(Id, TypeName, Payload, ContractT, DescriptorT, ...)                   \
+  entries.push_back(MakeBindingEntry<ContractT, DescriptorT>(TypeName));
+#include "qrb_ros_adapter/ipc_runtime/contract_mappings.def"
+#undef QRB_CONTRACT_MAPPING
+  return entries;
 }
 
 }  // namespace
 
-// UT-HCM-02: the inline geometry Contracts share the value types of qrb_contracts, and some of
-// their descriptors a buffer type, but a binding takes only the descriptor and the Contract of
-// its own, whichever way it converts.
-TEST(HcmContractBinding, EveryGeometryBindingTakesOnlyItsOwnDescriptorAndContract)
+// Contracts share the value types of qrb_contracts, several descriptors share a buffer type
+// (CUSTOM_4) and the detection descriptors share a base class, but a binding takes only the
+// descriptor and the Contract message of its own Contract, whichever way it converts.
+TEST(HcmContractBinding, EveryBindingTakesOnlyItsOwnDescriptorAndContract)
 {
-  std::vector<GeometryEntry> entries;
-  entries.push_back(MakeGeometryEntry<PoseHcmContract, PoseHcmDescriptor>(
-      kPoseWithCovarianceStampedContractType));
-  entries.push_back(MakeGeometryEntry<PoseStampedHcmContract, PoseStampedHcmDescriptor>(
-      kPoseStampedContractType));
-  entries.push_back(
-      MakeGeometryEntry<PoseArrayHcmContract, PoseArrayHcmDescriptor>(kPoseArrayContractType));
-  entries.push_back(
-      MakeGeometryEntry<TwistHcmContract, TwistHcmDescriptor>(kTwistStampedContractType));
-  entries.push_back(
-      MakeGeometryEntry<TFMessageHcmContract, TFMessageHcmDescriptor>(kTFMessageContractType));
-  entries.push_back(MakeGeometryEntry<Vector3StampedHcmContract, Vector3StampedHcmDescriptor>(
-      kVector3StampedContractType));
-  entries.push_back(
-      MakeGeometryEntry<OdometryHcmContract, OdometryHcmDescriptor>(kOdometryContractType));
+  const std::vector<BindingEntry> entries = MakeEveryBindingEntry();
+  ASSERT_EQ(entries.size(), HcmContractBindingCount());
 
   for (std::size_t i = 0; i < entries.size(); ++i) {
-    const std::string name(entries[i].contractType);
+    const std::string & name = entries[i].contractType;
     const HcmContractBinding * binding = FindHcmContractBinding(name);
     ASSERT_NE(binding, nullptr) << name;
     for (std::size_t j = 0; j < entries.size(); ++j) {
-      const std::string other(entries[j].contractType);
+      const std::string & other = entries[j].contractType;
       EXPECT_EQ(binding->acceptsDescriptor(*entries[j].descriptor), i == j) << name << " " << other;
       if (i == j)
         continue;

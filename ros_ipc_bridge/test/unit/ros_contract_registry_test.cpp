@@ -11,9 +11,8 @@
 
 using namespace qrb::adapter;
 
-// Every shared Contract Descriptor has exactly one ROS binding with a
-// factory and a unique node name, so adding a Contract cannot silently leave the
-// ROS side unimplemented.
+// Every shared Contract Descriptor has exactly one ROS binding with a factory and a unique default
+// node name, so adding a Contract cannot silently leave the ROS side unimplemented.
 TEST(RosContractRegistry, BindsEveryContractDescriptorExactlyOnce)
 {
   ASSERT_EQ(RosContractBindingCount(), ContractDescriptorCount());

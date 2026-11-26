@@ -100,8 +100,11 @@ TEST(HcmIpcAdapterConfig, ParsesTheStaticBlockAndRejectsInvalidOnesUntouched)
     root["static"]["qos_profile"][key] = std::move(value);
     return root.dump();
   };
-  nlohmann::json withoutTopic = MakeConfig();
-  withoutTopic["static"].erase("ros_topic");
+  const auto without = [](const char * key) {
+    nlohmann::json root = MakeConfig();
+    root["static"].erase(key);
+    return root.dump();
+  };
 
   const struct
   {
@@ -110,8 +113,15 @@ TEST(HcmIpcAdapterConfig, ParsesTheStaticBlockAndRejectsInvalidOnesUntouched)
     Status expected;
   } cases[] = {
       {"MalformedJson", "{\"static\":", Status::kInvalidArgument},
-      {"MissingRosTopic", withoutTopic.dump(), Status::kInvalidArgument},
-      // direction is 0 or 1; the old string names are rejected.
+      {"MissingStatic", "{}", Status::kInvalidArgument},
+      {"StaticNotObject", "{\"static\":[]}", Status::kInvalidArgument},
+      {"MissingName", without("name"), Status::kInvalidArgument},
+      {"MissingContractType", without("contract_type"), Status::kInvalidArgument},
+      {"MissingDirection", without("direction"), Status::kInvalidArgument},
+      {"MissingRosTopic", without("ros_topic"), Status::kInvalidArgument},
+      {"EmptyName", with("name", ""), Status::kInvalidArgument},
+      {"NameNotString", with("name", 1), Status::kInvalidArgument},
+      // direction is the integer 0 or 1, not a name.
       {"UnknownDirection", with("direction", 2), Status::kInvalidArgument},
       {"DirectionString", with("direction", "ros_to_hcm"), Status::kInvalidArgument},
       {"IdOutOfRange", with("id", 256), Status::kInvalidArgument},

@@ -82,9 +82,9 @@ Detection3DRosMessage MakeRos3d()
 
 }  // namespace
 
-// UT-ROS-04: every field of a Detection2DArray survives ROS -> Contract -> wire -> ROS; a known
-// covariance is carried and an all-zero one is left out of the Contract; an empty array is a
-// result; a detection in another frame, or a non-finite value, is rejected in both directions.
+// Every field of a Detection2DArray survives ROS -> Contract -> wire -> ROS; a known covariance is
+// carried and an all-zero one is left out of the Contract; an empty array is a result; a detection
+// in another frame or a non-finite value is rejected, and so is an invalid Contract.
 TEST(Detection2DRosConverter, RoundTripsEveryFieldAndRejectsWhatItCannotCarry)
 {
   const Detection2DRosMessage source = MakeRos2d();
@@ -109,7 +109,8 @@ TEST(Detection2DRosConverter, RoundTripsEveryFieldAndRejectsWhatItCannotCarry)
   ASSERT_TRUE(Detection2DRosConversion::ContractToRos(received, back));
   EXPECT_EQ(back, source);
 
-  // Detections of a Contract get the header of the array.
+  // A detection's own stamp is not carried and an empty frame_id is allowed; back on ROS every
+  // detection gets the header of the array.
   Detection2DRosMessage unstamped = source;
   unstamped.detections[0].header = std_msgs::msg::Header();
   unstamped.detections[1].header.stamp.sec = 99;
@@ -151,6 +152,7 @@ TEST(Detection2DRosConverter, RoundTripsEveryFieldAndRejectsWhatItCannotCarry)
   EXPECT_FALSE(Detection2DRosConversion::ContractToRos(invalid, untouched));
 }
 
+// The same for a Detection3DArray, whose boxes have a size and an orientation.
 TEST(Detection3DRosConverter, RoundTripsEveryFieldAndRejectsWhatItCannotCarry)
 {
   const Detection3DRosMessage source = MakeRos3d();

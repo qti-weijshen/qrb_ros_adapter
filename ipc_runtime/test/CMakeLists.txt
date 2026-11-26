@@ -1,5 +1,5 @@
 # -----------------------------------------------------------------------------
-# IPC Runtime unit tests (UT-IPC-*).
+# IPC Runtime unit tests.
 #
 # Pure functions; no socket, no ROS, no DMA heap. The IPC Runtime over real
 # sockets is exercised by the end-to-end test in the top-level test/ directory.

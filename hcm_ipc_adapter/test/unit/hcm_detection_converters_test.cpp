@@ -24,7 +24,8 @@ namespace
 constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
 
 /**
- * @brief A detection descriptor over heap storage; converters only touch pBuf.
+ * @brief A detection descriptor over heap storage, which the converters read and fill like host
+ * memory.
  *
  * @p offset is not a multiple of the alignment of a record, to show that the converters do not
  * dereference records in place.
@@ -113,7 +114,7 @@ Detection3DHcmContract MakeContract3d()
 using Heap2d = HeapDetectionDescriptor<Detection2DHcmDescriptor, QRB::Memory::Detection2dRaw_t>;
 using Heap3d = HeapDetectionDescriptor<Detection3DHcmDescriptor, QRB::Memory::Detection3dRaw_t>;
 
-/** @brief A descriptor that already holds one detection, to see whether a rejection changes it. */
+/** @brief Gives the descriptor a stale frame, stamp and count to compare after a rejection. */
 void MarkUntouched(Detection2DHcmDescriptor & descriptor)
 {
   ASSERT_EQ(descriptor.frameId.Assign("untouched"), QC::QC_STATUS_OK);
@@ -134,7 +135,7 @@ void ExpectUntouched(const Heap2d & heap)
 
 }  // namespace
 
-// UT-HCM-05: Detection2DArray <-> the records in the buffer of the descriptor keep every field,
+// Detection2DArray <-> the records in the buffer of the descriptor keep every field,
 // at an unaligned buffer offset too; a known covariance is carried and an all-zero one is left
 // out of the Contract.
 TEST(HcmDetectionConverters, RoundTripEveryFieldOf2dDetections)
@@ -319,6 +320,8 @@ TEST(HcmDetectionConverters, RejectDescriptorsWhoseRecordsCannotBeReadOrSent)
   EXPECT_FALSE(convert(*heap));
 }
 
+// Detection3DArray <-> the records in the buffer of the descriptor keep every field, and a
+// negative box size or a buffer too small for the detections is rejected.
 TEST(HcmDetectionConverters, RoundTripEveryFieldOf3dDetections)
 {
   const Detection3DHcmContract source = MakeContract3d();

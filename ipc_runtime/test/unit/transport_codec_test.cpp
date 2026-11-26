@@ -82,6 +82,8 @@ TEST(TransportCodec, RoundTripsTheFixedLayoutAndRejectsMalformedHeaders)
             h.payloadSize = static_cast<std::uint32_t>(kMaxPayloadSize) + 1;
           },
           Status::kProtocolError},
+      {"TooManyFds", [](TransportHeader & h) { h.fdCount = kMaxFdCount + 1; },
+          Status::kProtocolError},
       {"OffsetWithoutFd",
           [](TransportHeader & h) {
             h.fdCount = 0;
@@ -101,4 +103,5 @@ TEST(TransportCodec, RoundTripsTheFixedLayoutAndRejectsMalformedHeaders)
   }
   EXPECT_EQ(
       DecodeTransportHeader(bytes.data(), bytes.size() - 1, decoded), Status::kInvalidArgument);
+  EXPECT_EQ(DecodeTransportHeader(nullptr, bytes.size(), decoded), Status::kInvalidArgument);
 }

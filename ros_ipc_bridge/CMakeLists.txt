@@ -126,8 +126,12 @@ ament_export_dependencies(
   ${QRB_ROS_TRANSPORT_DEPENDENCIES})
 
 if(BUILD_TESTING)
-  find_package(ament_cmake_gtest REQUIRED)
-  add_subdirectory(test)
+  find_package(GTest)
+  if(TARGET GTest::gtest_main)
+    add_subdirectory(test)
+  else()
+    message(STATUS "GTest not found, skipping ROS IPC Bridge tests")
+  endif()
 endif()
 
 ament_package()

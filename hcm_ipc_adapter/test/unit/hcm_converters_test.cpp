@@ -73,7 +73,7 @@ PointCloudHcmContract MakeCloud()
   return cloud;
 }
 
-/** @brief A PointCloud descriptor over heap storage; converters only touch pBuf. */
+/** @brief A PointCloud descriptor over heap storage; only pBuf, size and offset are read. */
 struct HeapCloudDescriptor
 {
   explicit HeapCloudDescriptor(std::size_t capacity, std::size_t offset = 0) : storage(capacity, 0)
@@ -89,9 +89,8 @@ struct HeapCloudDescriptor
 
 }  // namespace
 
-// Contract <-> HCM conversion keeps every field, rejects an invalid
-// value before it reaches either side, and bounds the PointCloud payload copy on
-// both ends.
+// PoseWithCovarianceStamped and PointCloud2 keep every field, reject an invalid value before it
+// reaches either side, and bound the PointCloud payload copy on both ends.
 TEST(HcmConverters, RoundTripEveryFieldAndRejectInvalidValuesOrPayloads)
 {
   {
@@ -457,9 +456,32 @@ TEST(HcmConverters, TFMessageRoundTripsThroughTheBufferAndRejectsWhatItCannotHol
       (ConvertHcmToContract<TFMessageHcmContract, TFMessageHcmDescriptor>(heap.descriptor, out)));
 }
 
-// UT-HCM-09: Imu keeps its header, orientation, angular_velocity and
-// linear_acceleration with all three covariances, and rejects what the
-// fixed-size descriptor cannot hold.
+namespace
+{
+
+ImuHcmContract MakeImu()
+{
+  ImuHcmContract imu;
+  imu.mutable_header()->mutable_stamp()->set_sec(5);
+  imu.mutable_header()->mutable_stamp()->set_nanosec(500000000);
+  imu.mutable_header()->set_frame_id("imu_link");
+  imu.mutable_orientation()->set_w(1.0);
+  imu.mutable_angular_velocity()->set_x(0.1);
+  imu.mutable_angular_velocity()->set_y(-0.2);
+  imu.mutable_linear_acceleration()->set_z(-9.8);
+  for (int i = 0; i < 9; ++i) {
+    imu.add_orientation_covariance(0.01 * i);
+    imu.add_angular_velocity_covariance(0.02 * i);
+    imu.add_linear_acceleration_covariance(0.03 * i);
+  }
+  return imu;
+}
+
+}  // namespace
+
+// Imu keeps its header, orientation, angular_velocity and linear_acceleration with all three
+// covariances, marks an absent covariance unknown (-1), and rejects an invalid value or a
+// frame_id the fixed-size descriptor cannot hold.
 TEST(HcmConverters, ImuRoundTripsEveryFieldAndRejectsInvalidValues)
 {
   const ImuHcmContract source = MakeImu();
@@ -480,6 +502,22 @@ TEST(HcmConverters, ImuRoundTripsEveryFieldAndRejectsInvalidValues)
   back.mutable_header()->set_frame_id("stale");
   ASSERT_TRUE((ConvertHcmToContract<ImuHcmContract, ImuHcmDescriptor>(descriptor, back)));
   EXPECT_EQ(back.SerializeAsString(), source.SerializeAsString());
+
+  // An absent covariance reaches HCM as 9 values of -1 and converts back as such.
+  ImuHcmContract noCovariance = MakeImu();
+  noCovariance.clear_orientation_covariance();
+  noCovariance.clear_angular_velocity_covariance();
+  noCovariance.clear_linear_acceleration_covariance();
+  ImuHcmDescriptor unknown;
+  ASSERT_TRUE((
+      ConvertContractToHcm<ImuHcmContract, ImuHcmDescriptor>(noCovariance, DmaBufView{}, unknown)));
+  EXPECT_DOUBLE_EQ(unknown.orientation_covariance[0], -1.0);
+  EXPECT_DOUBLE_EQ(unknown.angular_velocity_covariance[4], -1.0);
+  EXPECT_DOUBLE_EQ(unknown.linear_acceleration_covariance[8], -1.0);
+  ImuHcmContract unknownBack;
+  ASSERT_TRUE((ConvertHcmToContract<ImuHcmContract, ImuHcmDescriptor>(unknown, unknownBack)));
+  ASSERT_EQ(unknownBack.linear_acceleration_covariance_size(), 9);
+  EXPECT_DOUBLE_EQ(unknownBack.linear_acceleration_covariance(8), -1.0);
 
   // A rejected message leaves the descriptor untouched.
   ImuHcmDescriptor untouched;
@@ -590,7 +628,7 @@ struct HeapJointDescriptor
 
 }  // namespace
 
-// UT-HCM-06: An ImageLayout from ROS lands in the rows of the host's own Camera
+// An ImageLayout from ROS lands in the rows of the host's own Camera
 // frame layout, the descriptor's planes and stamp travel back to ROS, and the
 // camera qtimer converts to and from ROS time.
 TEST(HcmConverters, ImageKeepsTheHostLayoutAndConvertsTheQtimer)
@@ -662,7 +700,7 @@ TEST(HcmConverters, ImageKeepsTheHostLayoutAndConvertsTheQtimer)
   SetHcmClockSampler(previous);
 }
 
-// UT-HCM-06: JointState keeps the parallel arrays and bounds its aligned host records.
+// JointState keeps the parallel arrays and bounds its aligned host records.
 TEST(HcmConverters, JointStateRoundTripsThroughHostStorageAndRejectsInvalidFrames)
 {
   for (std::uint32_t count :
@@ -753,7 +791,7 @@ PoseStampedHcmContract MakePoseStamped()
 
 }  // namespace
 
-// UT-HCM-06: PoseStamped keeps its frame, stamp and pose, and rejects what the fixed-size
+// PoseStamped keeps its frame, stamp and pose, and rejects what the fixed-size
 // descriptor cannot hold.
 TEST(HcmConverters, PoseStampedRoundTripsEveryFieldAndRejectsInvalidValues)
 {
@@ -880,7 +918,7 @@ constexpr int kPoseLimit = static_cast<int>(contract_limits::kMaxPoseCount);
 
 }  // namespace
 
-// UT-HCM-07: PoseArray writes every pose into the descriptor's buffer, reads them back
+// PoseArray writes every pose into the descriptor's buffer, reads them back
 // unchanged, and rejects what that buffer cannot hold.
 TEST(HcmConverters, PoseArrayRoundTripsThroughTheBufferAndRejectsWhatItCannotHold)
 {
@@ -1055,7 +1093,7 @@ Vector3StampedHcmContract MakeVector3Stamped()
 
 }  // namespace
 
-// UT-HCM-08: Vector3Stamped keeps its frame, stamp and vector, the zero vector among them, and
+// Vector3Stamped keeps its frame, stamp and vector, the zero vector among them, and
 // rejects what the fixed-size descriptor cannot hold.
 TEST(HcmConverters, Vector3StampedRoundTripsEveryFieldAndRejectsInvalidValues)
 {

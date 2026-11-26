@@ -1,5 +1,5 @@
 # -----------------------------------------------------------------------------
-# HCM IPC Adapter unit tests (UT-HCM-*).
+# HCM IPC Adapter unit tests.
 #
 # Pure functions and single classes; no socket and no peer. HcmFlowClient and
 # HcmIpcAdapterNode against the real ROS Bridge Manager are exercised by

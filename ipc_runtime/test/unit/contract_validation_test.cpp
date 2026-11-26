@@ -32,7 +32,7 @@ geometry_proto::PoseWithCovarianceStamped MakePose()
   return pose;
 }
 
-// 2 rows x 4 points of 16 bytes: x/y/z FLOAT32 and one UINT8 intensity.
+// 2 rows x 4 points of 16 bytes: x/y/z FLOAT32 and 4 UINT8 intensity bytes.
 sensor_proto::PointCloud2 MakeCloud()
 {
   sensor_proto::PointCloud2 cloud;
@@ -72,8 +72,8 @@ sensor_proto::Imu MakeImu()
 
 }  // namespace
 
-// Contract validation is the last line before a value reaches either
-// side; a PointCloud layout must fit the external payload exactly as declared.
+// PoseWithCovarianceStamped needs a valid header, a finite pose with a non-zero quaternion and 0
+// or 36 covariances; a PointCloud2 layout must fit the external payload exactly as declared.
 TEST(ContractValidation, RejectsInvalidPosesAndLayoutsThePayloadCannotBack)
 {
   geometry_proto::PoseWithCovarianceStamped full = MakePose();
@@ -264,8 +264,8 @@ TEST(ContractValidation, RejectsInvalidTwistStamped)
   }
 }
 
-// TFMessage checks every transform: header, child_frame_id and a
-// finite, non-zero rotation; an empty message is valid.
+// TFMessage checks every transform: header, child_frame_id, a finite translation and a finite,
+// non-zero rotation; it holds at most kMaxTransformCount transforms, and an empty message is valid.
 TEST(ContractValidation, RejectsInvalidTFMessage)
 {
   using TF = ::qrb::contract::tf2::v1::TFMessage;
@@ -325,7 +325,8 @@ TEST(ContractValidation, RejectsInvalidTFMessage)
   }
 }
 
-// UT-IPC-06: JointState arrays are empty or complete, and names and values are bounded.
+// JointState holds at most kMaxJointCount joints with non-empty, bounded names; position, velocity
+// and effort are each empty (a missing measurement) or one finite value per name.
 TEST(ContractValidation, RejectsInvalidJointStateAndPreservesMissingMeasurements)
 {
   using Message = sensor_proto::JointState;
@@ -422,9 +423,9 @@ geometry_proto::PoseStamped MakePoseStamped()
 
 }  // namespace
 
-// UT-IPC-06: Without planes an ImageLayout uses the qrb_ros_transport aligned
-// layout (128-pixel rows, 32-row planes, 256-pixel rgb allocations, 4096-byte
-// total); explicit planes describe a native layout. Both must fit the payload.
+// Without planes an ImageLayout uses the qrb_ros_transport aligned layout (128-pixel rows, 32-row
+// planes, 256-pixel rgb allocations, 4096-byte allocations); explicit planes describe a native
+// layout. Both must fit the payload.
 TEST(ContractValidation, ResolvesImageLayoutsAndRejectsInvalidOnes)
 {
   ImageLayout layout;
@@ -479,9 +480,8 @@ TEST(ContractValidation, ResolvesImageLayoutsAndRejectsInvalidOnes)
   }
 }
 
-// UT-IPC-06: PoseStamped needs a valid header and a present pose with a finite position and
-// orientation and a quaternion that is not zero; one that is not of unit length is passed on as it
-// is.
+// PoseStamped needs a valid header and a present pose with a finite position and orientation and
+// a quaternion that is not zero; one that is not of unit length is passed on as it is.
 TEST(ContractValidation, RejectsInvalidPoseStamped)
 {
   const geometry_proto::PoseStamped pose = MakePoseStamped();
@@ -498,8 +498,7 @@ TEST(ContractValidation, RejectsInvalidPoseStamped)
   halfTurn.mutable_pose()->mutable_orientation()->set_x(1.0);
   halfTurn.mutable_pose()->mutable_orientation()->set_w(0.0);
   EXPECT_TRUE(ValidatePoseStamped(halfTurn));
-  // A position left out reads as the origin; it is the orientation that must be set. A quaternion
-  // that is not of unit length is passed on as it is.
+  // A position left out reads as the origin; it is the orientation that must be set.
   geometry_proto::PoseStamped origin = pose;
   origin.mutable_pose()->clear_position();
   EXPECT_TRUE(ValidatePoseStamped(origin));
@@ -581,7 +580,7 @@ constexpr int kPoseLimit = static_cast<int>(contract_limits::kMaxPoseCount);
 
 }  // namespace
 
-// UT-IPC-07: PoseArray checks every pose as PoseStamped does its pose, and the header, holds at
+// PoseArray checks every pose as PoseStamped does its pose, and the header, holds at
 // most kMaxPoseCount poses, and is valid when empty: "no pose found" is a result.
 TEST(ContractValidation, RejectsInvalidPoseArray)
 {
@@ -647,7 +646,7 @@ TEST(ContractValidation, RejectsInvalidPoseArray)
   EXPECT_EQ(header.Diagnostic().find("poses["), std::string::npos) << header.Diagnostic();
 }
 
-// UT-IPC-08: the limit of kMaxPoseCount holds what its comment claims: a pose takes at most 69
+// kMaxPoseCount holds what its comment claims: a pose takes at most 69
 // bytes in the array, so that many poses with the longest frame_id, and every field non-zero
 // since Protobuf leaves a zero out, take about 68 KiB, within one IPC payload.
 TEST(ContractValidation, AFullPoseArrayFitsOneIpcPayload)
@@ -689,7 +688,7 @@ geometry_proto::Vector3Stamped MakeVector3Stamped()
 
 }  // namespace
 
-// UT-IPC-09: Vector3Stamped needs a valid header and a present, finite vector; the zero vector
+// Vector3Stamped needs a valid header and a present, finite vector; the zero vector
 // is a value like any other.
 TEST(ContractValidation, RejectsInvalidVector3Stamped)
 {
@@ -784,7 +783,7 @@ constexpr double kInf = std::numeric_limits<double>::infinity();
 
 }  // namespace
 
-// UT-IPC-10: a detection array is valid when every number is finite, the strings fit and the
+// A detection array is valid when every number is finite, the strings fit and the
 // optional parts are consistent; the check names the detection that failed. An empty array
 // ("nothing detected") and a box without orientation are valid.
 TEST(ContractValidation, AcceptsDetectionArraysAndRejectsInvalidDetections)
@@ -798,10 +797,10 @@ TEST(ContractValidation, AcceptsDetectionArraysAndRejectsInvalidDetections)
   vision_proto::Detection3DArray empty3d;
   EXPECT_TRUE(ValidateDetection3DArray(empty3d));
 
-  // Publishers that never set the quaternions send all zeros; it is passed on as it is.
-  vision_proto::Detection3DArray unnormalized = MakeDetections3D();
-  unnormalized.mutable_detections(0)->mutable_bbox()->mutable_center()->clear_orientation();
-  EXPECT_TRUE(ValidateDetection3DArray(unnormalized));
+  // Publishers that never set the quaternion send all zeros; such a box is passed on as it is.
+  vision_proto::Detection3DArray noOrientation = MakeDetections3D();
+  noOrientation.mutable_detections(0)->mutable_bbox()->mutable_center()->clear_orientation();
+  EXPECT_TRUE(ValidateDetection3DArray(noOrientation));
   // A hypothesis without pose reads as the identity.
   vision_proto::Detection2DArray noPose = MakeDetections2D();
   noPose.mutable_detections(1)->mutable_results(0)->clear_pose();
@@ -828,11 +827,14 @@ TEST(ContractValidation, AcceptsDetectionArraysAndRejectsInvalidDetections)
       "negative size", [](auto & a) { a.mutable_detections(0)->mutable_bbox()->set_size_y(-1.0); });
   invalid2d(
       "nan size", [](auto & a) { a.mutable_detections(0)->mutable_bbox()->set_size_x(kNaN); });
-  invalid2d("long id", [](auto & a) { a.mutable_detections(0)->set_id(std::string(256, 'i')); });
+  invalid2d("long id", [](auto & a) {
+    a.mutable_detections(0)->set_id(
+        std::string(contract_limits::kMaxDetectionStringLength + 1, 'i'));
+  });
   invalid2d("nul id", [](auto & a) { a.mutable_detections(0)->set_id(std::string("a\0b", 3)); });
   invalid2d("long class", [](auto & a) {
     auto * hypothesis = a.mutable_detections(0)->mutable_results(0)->mutable_hypothesis();
-    hypothesis->set_class_id(std::string(256, 'c'));
+    hypothesis->set_class_id(std::string(contract_limits::kMaxDetectionStringLength + 1, 'c'));
   });
   invalid2d("nul class", [](auto & a) {
     auto * hypothesis = a.mutable_detections(0)->mutable_results(0)->mutable_hypothesis();
@@ -876,12 +878,12 @@ TEST(ContractValidation, AcceptsDetectionArraysAndRejectsInvalidDetections)
       [](auto & a) { a.mutable_detections(0)->mutable_bbox()->mutable_size()->set_x(kNaN); });
   invalid3d("bad class", [](auto & a) {
     auto * hypothesis = a.mutable_detections(0)->mutable_results(0)->mutable_hypothesis();
-    hypothesis->set_class_id(std::string(300, 'c'));
+    hypothesis->set_class_id(std::string(contract_limits::kMaxDetectionStringLength + 1, 'c'));
   });
 }
 
-// UT-IPC-11: Imu needs a valid header, a present non-zero orientation, finite
-// angular_velocity and linear_acceleration, and 0-or-9-value covariances.
+// Imu needs a valid header, a present non-zero orientation, finite angular_velocity and
+// linear_acceleration, and 0-or-9-value covariances.
 TEST(ContractValidation, RejectsInvalidImu)
 {
   sensor_proto::Imu full = MakeImu();

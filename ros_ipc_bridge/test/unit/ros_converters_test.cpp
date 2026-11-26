@@ -23,6 +23,7 @@
 #include "qrb_ros_adapter/ros_ipc_bridge/flow_bridge/odometry_ros_converter.hpp"
 #include "qrb_ros_adapter/ros_ipc_bridge/flow_bridge/point_cloud_ros_converter.hpp"
 #include "qrb_ros_adapter/ros_ipc_bridge/flow_bridge/pose_array_ros_converter.hpp"
+#include "qrb_ros_adapter/ros_ipc_bridge/flow_bridge/pose_ros_converter.hpp"
 #include "qrb_ros_adapter/ros_ipc_bridge/flow_bridge/pose_stamped_ros_converter.hpp"
 #include "qrb_ros_adapter/ros_ipc_bridge/flow_bridge/tf_message_ros_converter.hpp"
 #include "qrb_ros_adapter/ros_ipc_bridge/flow_bridge/twist_ros_converter.hpp"
@@ -61,7 +62,7 @@ constexpr std::uint32_t kPointStep = 32;
 constexpr std::uint32_t kPoints = 4;
 constexpr std::uint32_t kCloudBytes = kPointStep * kPoints;
 
-/** @brief One point of every PointField datatype, packed into 32 bytes. */
+/** @brief Four 32-byte points, each with one field of every PointField datatype. */
 PointCloudRosMessage MakeRosCloud(std::size_t bufferSize = kCloudBytes)
 {
   using PF = sensor_msgs::msg::PointField;
@@ -219,6 +220,54 @@ TEST(OdometryRosConverter, MapsEveryFieldBothWaysAndRejectsInvalidValues)
   EXPECT_FALSE(OdometryRosConversion::ContractToRos(badContract, back));
 }
 
+// geometry_msgs/PoseWithCovarianceStamped maps 1:1 to the Contract, the covariance included; an
+// invalid value is rejected in either direction.
+TEST(PoseRosConverter, MapsEveryFieldBothWaysAndRejectsInvalidValues)
+{
+  PoseRosMessage ros;
+  ros.header.stamp.sec = 3;
+  ros.header.stamp.nanosec = 4;
+  ros.header.frame_id = "map";
+  ros.pose.pose.position.x = 2.0;
+  ros.pose.pose.position.y = -1.0;
+  ros.pose.pose.orientation.z = 0.6;
+  ros.pose.pose.orientation.w = 0.8;
+  for (std::size_t i = 0; i < 36; ++i)
+    ros.pose.covariance[i] = 0.01 * static_cast<double>(i);
+
+  PoseRosContract contract;
+  ASSERT_TRUE(PoseRosConversion::RosToContract(ros, contract));
+  EXPECT_EQ(contract.header().frame_id(), "map");
+  EXPECT_EQ(contract.header().stamp().nanosec(), 4u);
+  EXPECT_DOUBLE_EQ(contract.pose().pose().position().y(), -1.0);
+  EXPECT_DOUBLE_EQ(contract.pose().pose().orientation().z(), 0.6);
+  ASSERT_EQ(contract.pose().covariance_size(), 36);
+  EXPECT_DOUBLE_EQ(contract.pose().covariance(35), 0.35);
+
+  PoseRosMessage back;
+  back.header.frame_id = "stale";
+  back.pose.pose.position.x = 99.0;
+  ASSERT_TRUE(PoseRosConversion::ContractToRos(contract, back));
+  EXPECT_EQ(back, ros);
+
+  // An empty Contract covariance means unknown; ROS gets the zero matrix.
+  contract.mutable_pose()->clear_covariance();
+  ASSERT_TRUE(PoseRosConversion::ContractToRos(contract, back));
+  EXPECT_DOUBLE_EQ(back.pose.covariance[35], 0.0);
+
+  PoseRosMessage invalid = ros;
+  invalid.pose.pose.position.x = std::numeric_limits<double>::quiet_NaN();
+  EXPECT_FALSE(PoseRosConversion::RosToContract(invalid, contract));
+  PoseRosMessage zero = ros;
+  zero.pose.pose.orientation.z = 0.0;
+  zero.pose.pose.orientation.w = 0.0;
+  EXPECT_FALSE(PoseRosConversion::RosToContract(zero, contract));
+  PoseRosContract badContract;
+  ASSERT_TRUE(PoseRosConversion::RosToContract(ros, badContract));
+  badContract.mutable_header()->set_frame_id("/map");
+  EXPECT_FALSE(PoseRosConversion::ContractToRos(badContract, back));
+}
+
 // geometry_msgs/TwistStamped maps 1:1 to the Contract; an invalid
 // value is rejected in either direction.
 TEST(TwistRosConverter, MapsEveryFieldBothWaysAndRejectsInvalidValues)
@@ -292,7 +341,7 @@ TEST(TFMessageRosConverter, MapsEveryTransformBothWaysAndRejectsInvalidValues)
 namespace
 {
 
-// four sizes below are routinely confused; the converter must pick the right one.
+// The four sizes of a 1920x1080 rgb8 image; the converter must pick the right one.
 constexpr std::uint32_t kImageWidth = 1920;
 constexpr std::uint32_t kImageHeight = 1080;
 constexpr std::uint64_t kImageStep = 5760;           // logical: width * 3
@@ -300,7 +349,8 @@ constexpr std::uint64_t kImagePixels = 6220800;      // step * height
 constexpr std::uint64_t kImagePitchRows = 6266880;   // pitch * aligned height
 constexpr std::uint64_t kImageAllocation = 6684672;  // full aligned allocation
 
-/** @brief The custom transport type leaves its scalars uninitialized. */
+/** @brief A memfd-backed image, value-initialized: the transport type leaves its scalars
+ * uninitialized. */
 ImageRosMessage MakeRosImage(std::uint32_t width = kImageWidth,
     std::uint32_t height = kImageHeight,
     const char * encoding = "rgb8",
@@ -330,10 +380,9 @@ void AddPlane(ImageRosContract & image,
 }
 }  // namespace
 
-// UT-ROS-05: Image metadata maps to the fields the custom transport type
-// actually has, ROS -> Contract binds the producer's buffer over the canonical
-// aligned layout and leaves planes empty per the proto, and Contract -> ROS
-// turns an arbitrary native plane layout into a valid-pixel copy plan over the
+// Image metadata maps to the fields the custom transport type actually has, ROS -> Contract binds
+// the producer's buffer over the canonical aligned layout and leaves planes empty per the proto,
+// and Contract -> ROS turns an arbitrary native plane layout into a valid-pixel copy plan over the
 // independently sized canonical destination.
 TEST(ImageRosConverter, MapsMetadataBindsTheDmaBufAndPlansTheCanonicalRepack)
 {
@@ -468,9 +517,8 @@ TEST(ImageRosConverter, MapsMetadataBindsTheDmaBufAndPlansTheCanonicalRepack)
   }
 }
 
-// UT-ROS-05: sensor_msgs/JointState maps 1:1 to the Contract; an empty
-// measurement array stays empty, and malformed array lengths or invalid values
-// are rejected in either direction.
+// sensor_msgs/JointState maps 1:1 to the Contract; an empty measurement array stays empty, and
+// malformed array lengths or invalid values are rejected in either direction.
 TEST(JointStateRosConverter, MapsEveryFieldBothWaysAndRejectsMalformedMeasurements)
 {
   JointStateRosMessage ros;
@@ -535,8 +583,8 @@ TEST(JointStateRosConverter, MapsEveryFieldBothWaysAndRejectsMalformedMeasuremen
   EXPECT_FALSE(JointStateRosConversion::ContractToRos(mismatched, back));
 }
 
-// UT-ROS-05: geometry_msgs/PoseStamped maps 1:1 to the Contract; an invalid value is rejected in
-// either direction.
+// geometry_msgs/PoseStamped maps 1:1 to the Contract; an invalid value is rejected in either
+// direction.
 TEST(PoseStampedRosConverter, MapsEveryFieldBothWaysAndRejectsInvalidValues)
 {
   PoseStampedRosMessage ros;
@@ -588,7 +636,7 @@ TEST(PoseStampedRosConverter, MapsEveryFieldBothWaysAndRejectsInvalidValues)
   EXPECT_EQ(back, ros);
 }
 
-// UT-ROS-06: geometry_msgs/PoseArray maps every pose 1:1 to the Contract, an empty array
+// geometry_msgs/PoseArray maps every pose 1:1 to the Contract, an empty array
 // included; an invalid pose, or more poses than a Contract holds, is rejected in either direction.
 TEST(PoseArrayRosConverter, MapsEveryPoseBothWaysAndRejectsInvalidValues)
 {
@@ -667,7 +715,7 @@ TEST(PoseArrayRosConverter, MapsEveryPoseBothWaysAndRejectsInvalidValues)
   EXPECT_FALSE(PoseArrayRosConversion::ContractToRos(tooManyContract, back));
 }
 
-// UT-ROS-07: geometry_msgs/Vector3Stamped maps 1:1 to the Contract, the zero vector included; an
+// geometry_msgs/Vector3Stamped maps 1:1 to the Contract, the zero vector included; an
 // invalid value is rejected in either direction.
 TEST(Vector3StampedRosConverter, MapsEveryFieldBothWaysAndRejectsInvalidValues)
 {
@@ -719,9 +767,8 @@ TEST(Vector3StampedRosConverter, MapsEveryFieldBothWaysAndRejectsInvalidValues)
   EXPECT_EQ(back, ros);
 }
 
-// UT-ROS-08: sensor_msgs/Imu maps 1:1 to the Contract; covariates with 9 values
-// round-trip exactly, an empty Contract covariance returns the zero array, and
-// an invalid value is rejected in either direction.
+// sensor_msgs/Imu maps 1:1 to the Contract; 9-value covariances round-trip exactly, an empty
+// Contract covariance becomes the zero array, and an invalid value is rejected in either direction.
 TEST(ImuRosConverter, MapsEveryFieldBothWaysAndRejectsInvalidValues)
 {
   ImuRosMessage ros;
