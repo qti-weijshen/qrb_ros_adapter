@@ -118,6 +118,9 @@ public:
   /** @brief True from a successful Initialize() until Close(), explicit or after a fatal error. */
   bool IsOpen() const { return binding_ != nullptr; }
 
+  /** @brief Why the last fatal error closed the Session; empty before any. */
+  const std::string & FailureDiagnostic() const { return failureDiagnostic_; }
+
   const FlowContext & Context() const { return context_; }
 
 private:
@@ -146,6 +149,7 @@ private:
   const HcmContractBinding * binding_{nullptr};
   std::unique_ptr<google::protobuf::MessageLite> contractMessage_;
   std::string bootstrapSocketPath_;
+  std::string failureDiagnostic_;
 
   bool managerRegistered_{false};
 };

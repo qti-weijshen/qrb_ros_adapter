@@ -1,0 +1,9 @@
+{
+  "static": {
+    "name": "stream_probe_pose_cov_r2h",
+    "contract_type": "qrb.contract.geometry.v1.PoseWithCovarianceStamped",
+    "direction": 1,
+    "ros_topic": "/qrb_ros_adapter/stream_probe/pose_cov_r2h",
+    "qos_profile": { "reliability": "best_effort", "durability": "volatile", "depth": 5 }
+  }
+}

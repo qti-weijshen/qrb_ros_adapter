@@ -801,7 +801,7 @@ struct RosProbeSample<adapter::PointCloudRosMessage>
       : streamTag_(streamTag)
       , bytes_(payloadBytes)
       ,
-      // The DDS queue, the Bridge's latest sample, one at HCM, and spares.
+      // The Bridge's QoS history, the one being fetched, and spares.
       pool_(static_cast<std::size_t>(payloadBytes), depth + 4u, streamTag)
     {
       if (bytes_ < kMinPayloadBytes || bytes_ % kPointStep != 0)

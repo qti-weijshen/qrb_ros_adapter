@@ -64,9 +64,9 @@ using FlowTerminalCallback = std::function<void(FlowTerminalEvent)>;
  * service thread accepts the single HCM client, completes the handshake and
  * serves frames. Publisher::publish() is safe to call from that thread.
  *
- * On ros_to_hcm, the Subscription callback stores the newest message in a
- * LatestSample slot that the service thread reads (see latest_sample.hpp), so
- * the node must be spinning on the shared executor for delivery to happen.
+ * On ros_to_hcm, messages wait in the Subscription's QoS history; each
+ * FETCH_REQUEST makes the service thread take the oldest one (see
+ * fetch_subscription.hpp), not the shared executor.
  *
  * A configuration or Descriptor failure makes construction throw.
  */

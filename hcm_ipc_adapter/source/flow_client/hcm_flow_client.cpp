@@ -65,6 +65,7 @@ Status HcmFlowClient::Initialize(const FlowConfig & config,
     diagnostic += "HcmFlowClient is already initialized; ";
     return Status::kBadState;
   }
+  failureDiagnostic_.clear();
 
   const auto deadline = Clock::now() + std::chrono::milliseconds(config.startupTimeoutMs);
 
@@ -120,13 +121,15 @@ Status HcmFlowClient::Initialize(const FlowConfig & config,
 
   Status connected = session_.Connect(context_.Registration().dataSocketPath, Remaining(deadline));
   if (connected != Status::kOk) {
-    return Fail(connected, connected == Status::kTimeout ? "data socket connect timed out" :
-                                                           "data socket connect failed");
+    diagnostic += connected == Status::kTimeout ? "data socket connect timed out; " :
+                                                  "data socket connect failed; ";
+    return Fail(connected, diagnostic);
   }
 
   const auto handshakeTimeout = Remaining(deadline);
   if (handshakeTimeout.count() == 0) {
-    return Fail(Status::kTimeout, "startup timed out before data handshake");
+    diagnostic += "startup timed out before data handshake; ";
+    return Fail(Status::kTimeout, diagnostic);
   }
   Status handshake = session_.PerformClientHandshake(
       context_.Config().flowId, context_.Registration(), handshakeTimeout, diagnostic);
@@ -233,8 +236,8 @@ void HcmFlowClient::UnregisterManagedFlow()
 
 Status HcmFlowClient::Fail(Status reason, const std::string & diagnostic)
 {
-  (void)diagnostic;
   Close();
+  failureDiagnostic_ = diagnostic;
   return reason;
 }
 
