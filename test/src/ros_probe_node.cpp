@@ -49,8 +49,8 @@ inline constexpr bool kAlwaysFalse = false;
  *
  *   class Source            // a sender's frames
  *   {
- *       // throws on a bad payload size
- *       Source( std::uint64_t payloadBytes, std::uint32_t depth, std::uint32_t streamTag );
+ *       // throws on a bad frame size
+ *       Source( const ProbeFrameSize &size, std::uint32_t depth, std::uint32_t streamTag );
  *       SendOutcome Next( std::uint64_t sequence, std::unique_ptr<RosMessageT> &out,
  *           std::uint64_t &sendTimeNs );
  *       std::uint64_t PayloadBytes() const;
@@ -80,7 +80,9 @@ struct RosProbeSample<adapter::PoseRosMessage>
   class Source
   {
   public:
-    Source(std::uint64_t, std::uint32_t, std::uint32_t streamTag) : streamTag_(streamTag) {}
+    Source(const ProbeFrameSize &, std::uint32_t, std::uint32_t streamTag) : streamTag_(streamTag)
+    {
+    }
 
     SendOutcome Next(std::uint64_t sequence,
         std::unique_ptr<Message> & out,
@@ -136,7 +138,9 @@ struct RosProbeSample<adapter::OdometryRosMessage>
   class Source
   {
   public:
-    Source(std::uint64_t, std::uint32_t, std::uint32_t streamTag) : streamTag_(streamTag) {}
+    Source(const ProbeFrameSize &, std::uint32_t, std::uint32_t streamTag) : streamTag_(streamTag)
+    {
+    }
 
     SendOutcome Next(std::uint64_t sequence,
         std::unique_ptr<Message> & out,
@@ -196,7 +200,9 @@ struct RosProbeSample<adapter::TwistRosMessage>
   class Source
   {
   public:
-    Source(std::uint64_t, std::uint32_t, std::uint32_t streamTag) : streamTag_(streamTag) {}
+    Source(const ProbeFrameSize &, std::uint32_t, std::uint32_t streamTag) : streamTag_(streamTag)
+    {
+    }
 
     SendOutcome Next(std::uint64_t sequence,
         std::unique_ptr<Message> & out,
@@ -258,7 +264,9 @@ struct RosProbeSample<adapter::TFMessageRosMessage>
   class Source
   {
   public:
-    Source(std::uint64_t, std::uint32_t, std::uint32_t streamTag) : streamTag_(streamTag) {}
+    Source(const ProbeFrameSize &, std::uint32_t, std::uint32_t streamTag) : streamTag_(streamTag)
+    {
+    }
 
     SendOutcome Next(std::uint64_t sequence,
         std::unique_ptr<Message> & out,
@@ -344,7 +352,9 @@ struct RosProbeSample<adapter::JointStateRosMessage>
   class Source
   {
   public:
-    Source(std::uint64_t, std::uint32_t, std::uint32_t streamTag) : streamTag_(streamTag) {}
+    Source(const ProbeFrameSize &, std::uint32_t, std::uint32_t streamTag) : streamTag_(streamTag)
+    {
+    }
 
     SendOutcome Next(std::uint64_t sequence,
         std::unique_ptr<Message> & out,
@@ -447,7 +457,9 @@ struct RosProbeSample<adapter::PoseStampedRosMessage>
   class Source
   {
   public:
-    Source(std::uint64_t, std::uint32_t, std::uint32_t streamTag) : streamTag_(streamTag) {}
+    Source(const ProbeFrameSize &, std::uint32_t, std::uint32_t streamTag) : streamTag_(streamTag)
+    {
+    }
 
     SendOutcome Next(std::uint64_t sequence,
         std::unique_ptr<Message> & out,
@@ -497,7 +509,9 @@ struct RosProbeSample<adapter::ImuRosMessage>
   class Source
   {
   public:
-    Source(std::uint64_t, std::uint32_t, std::uint32_t streamTag) : streamTag_(streamTag) {}
+    Source(const ProbeFrameSize &, std::uint32_t, std::uint32_t streamTag) : streamTag_(streamTag)
+    {
+    }
 
     SendOutcome Next(std::uint64_t sequence,
         std::unique_ptr<Message> & out,
@@ -555,7 +569,9 @@ struct RosProbeSample<adapter::PoseArrayRosMessage>
   class Source
   {
   public:
-    Source(std::uint64_t, std::uint32_t, std::uint32_t streamTag) : streamTag_(streamTag) {}
+    Source(const ProbeFrameSize &, std::uint32_t, std::uint32_t streamTag) : streamTag_(streamTag)
+    {
+    }
 
     SendOutcome Next(std::uint64_t sequence,
         std::unique_ptr<Message> & out,
@@ -634,7 +650,9 @@ struct RosProbeSample<adapter::Vector3StampedRosMessage>
   class Source
   {
   public:
-    Source(std::uint64_t, std::uint32_t, std::uint32_t streamTag) : streamTag_(streamTag) {}
+    Source(const ProbeFrameSize &, std::uint32_t, std::uint32_t streamTag) : streamTag_(streamTag)
+    {
+    }
 
     SendOutcome Next(std::uint64_t sequence,
         std::unique_ptr<Message> & out,
@@ -783,7 +801,7 @@ private:
   std::shared_ptr<State> state_;
 };
 
-/** One row of `payload_bytes / 16` points x, y, z, intensity (FLOAT32). */
+/** One row of `point_cloud_bytes / 16` points x, y, z, intensity (FLOAT32) a sender sends. */
 template <>
 struct RosProbeSample<adapter::PointCloudRosMessage>
 {
@@ -797,15 +815,15 @@ struct RosProbeSample<adapter::PointCloudRosMessage>
   class Source
   {
   public:
-    Source(std::uint64_t payloadBytes, std::uint32_t depth, std::uint32_t streamTag)
+    Source(const ProbeFrameSize & size, std::uint32_t depth, std::uint32_t streamTag)
       : streamTag_(streamTag)
-      , bytes_(payloadBytes)
+      , bytes_(size.pointCloudBytes)
       ,
       // The Bridge's QoS history, the one being fetched, and spares.
-      pool_(static_cast<std::size_t>(payloadBytes), depth + 4u, streamTag)
+      pool_(static_cast<std::size_t>(size.pointCloudBytes), depth + 4u, streamTag)
     {
       if (bytes_ < kMinPayloadBytes || bytes_ % kPointStep != 0)
-        throw std::invalid_argument("'payload_bytes' of PointCloud2 must be a multiple of " +
+        throw std::invalid_argument("'point_cloud_bytes' of PointCloud2 must be a multiple of " +
                                     std::to_string(kPointStep) + " and at least " +
                                     std::to_string(kMinPayloadBytes));
       // Fail at start-up rather than at the first frame without a heap.
@@ -912,8 +930,8 @@ private:
 // --- sensor.v1.ImageLayout (DMA-BUF) ------------------------------------------
 
 /**
- * A kProbeImageWidth x ProbeImageHeight( payload_bytes ) rgb8 image in the
- * layout qrb_ros_transport allocates, taken from qrb_ros_transport itself so
+ * An `image_width` x `image_height` rgb8 image in the layout
+ * qrb_ros_transport allocates, taken from qrb_ros_transport itself so
  * the Adapter's copy of that rule is checked too. Its stamp is ROS time, which
  * the Adapter converts to and from the camera qtimer.
  */
@@ -928,20 +946,17 @@ struct RosProbeSample<adapter::ImageRosMessage>
   class Source
   {
   public:
-    Source(std::uint64_t payloadBytes, std::uint32_t depth, std::uint32_t streamTag)
+    Source(const ProbeFrameSize & size, std::uint32_t depth, std::uint32_t streamTag)
       : streamTag_(streamTag)
-      , height_(ProbeImageHeight(payloadBytes))
-      , layout_(TransportLayout(kProbeImageWidth, height_, kEncoding))
-      , pool_(StorageBytes(kProbeImageWidth, height_, kEncoding),
+      , width_(Checked(size).imageWidth)
+      , height_(size.imageHeight)
+      , layout_(TransportLayout(width_, height_, kEncoding))
+      , pool_(StorageBytes(width_, height_, kEncoding),
             depth + 4u,
             streamTag,
             [layout = layout_, streamTag](
                 std::uint8_t * data) { FillImagePattern(data, layout, streamTag); })
     {
-      if (height_ == 0)
-        throw std::invalid_argument(
-            "'payload_bytes' of ImageLayout must hold at least one row of " +
-            std::to_string(kProbeImageHcmStride) + " bytes");
       std::shared_ptr<lib_mem_dmabuf::DmaBuffer> buffer;
       DmaPayloadPool::Slot * slot = nullptr;
       if (pool_.Acquire(buffer, slot) != SendOutcome::kSent)
@@ -960,7 +975,7 @@ struct RosProbeSample<adapter::ImageRosMessage>
         return acquired;
 
       auto image = std::make_unique<Message>(Message());
-      image->width = static_cast<int>(kProbeImageWidth);
+      image->width = static_cast<int>(width_);
       image->height = static_cast<int>(height_);
       image->encoding = kEncoding;
       image->dmabuf = std::move(buffer);
@@ -983,7 +998,16 @@ struct RosProbeSample<adapter::ImageRosMessage>
     std::uint64_t PayloadBytes() const { return layout_.LogicalBytes(); }
 
   private:
+    static const ProbeFrameSize & Checked(const ProbeFrameSize & size)
+    {
+      const std::string why = CheckImageSize(size.imageWidth, size.imageHeight);
+      if (!why.empty())
+        throw std::invalid_argument(why);
+      return size;
+    }
+
     std::uint32_t streamTag_;
+    std::uint32_t width_;
     std::uint32_t height_;
     ProbeImageLayout layout_;
     DmaPayloadPool pool_;
@@ -1022,9 +1046,8 @@ struct RosProbeSample<adapter::ImageRosMessage>
     // qtimer the Adapter converted to ROS time.
     const std::uint64_t stamp = static_cast<std::uint64_t>(image.header.stamp.sec) * 1000000000ull +
                                 image.header.stamp.nanosec;
-    if (image.encoding != kEncoding || image.width != static_cast<int>(kProbeImageWidth) ||
-        !image.header.frame_id.empty() || image.header.stamp.sec < 0 ||
-        !WithinNs(stamp, RealtimeNowNs(), kStampToleranceNs))
+    if (image.encoding != kEncoding || !image.header.frame_id.empty() ||
+        image.header.stamp.sec < 0 || !WithinNs(stamp, RealtimeNowNs(), kStampToleranceNs))
       reading.check = FrameCheck::kBadLayout;
     return reading;
   }
@@ -1133,7 +1156,9 @@ struct RosDetectionProbe
   class Source
   {
   public:
-    Source(std::uint64_t, std::uint32_t, std::uint32_t streamTag) : streamTag_(streamTag) {}
+    Source(const ProbeFrameSize &, std::uint32_t, std::uint32_t streamTag) : streamTag_(streamTag)
+    {
+    }
 
     SendOutcome Next(std::uint64_t sequence,
         std::unique_ptr<Message> & out,
@@ -1229,7 +1254,7 @@ namespace
 constexpr std::uint64_t kNsPerSecond = 1000000000ull;
 /** Frames whose problems are logged one by one; later ones are only counted. */
 constexpr std::uint64_t kLoggedProblems = 10;
-/** Seconds between the monitor lines of the --log file. */
+/** Seconds between the monitor lines of the log_file. */
 constexpr std::uint64_t kLogMonitorSeconds = 5;
 
 std::uint64_t SecondsToNs(double seconds)
@@ -1263,14 +1288,14 @@ struct ParamHelp
   const char * description;
 };
 constexpr ParamHelp kParamHelp[] = {
-    {"params_file", "JSON file of the parameters below"},
     {"adapter_config", "the Adapter's static JSON; the Flow comes from it only"},
     {"fps", "frames per second of a sender, 0: unlimited"},
-    {"payload_bytes", "payload of each frame this side sends"},
-    {"buffer_bytes", "DMA buffer size of the HCM receiver (R2H); ignored on this side"},
+    {"point_cloud_bytes", "bytes of a PointCloud2 this side sends"},
+    {"image_width", "width of an rgb8 ImageLayout this side sends"},
+    {"image_height", "height of an rgb8 ImageLayout this side sends"},
     {"duration", "seconds to run, 0: until unloaded or a signal"},
     {"warmup", "seconds a receiver does not measure"},
-    {"log",
+    {"log_file",
         "text log: a line per frame sent or received, a monitor line every 5 s, events and the "
         "summary; empty: none"},
 };
@@ -1293,7 +1318,7 @@ constexpr const char * kHelpHint =
 // --- ProbeRecorder ---------------------------------------------------------------
 
 /**
- * @brief Statistics, events and the --log file of one probe. Called from the
+ * @brief Statistics, events and the log_file of one probe. Called from the
  * executor (frames, QoS events, the timer) and from the sending thread.
  */
 class ProbeRecorder
@@ -1305,19 +1330,19 @@ public:
       bool sender)
     : logger_(std::move(logger)), params_(params), sender_(sender), lastLogNs_(MonotonicNowNs())
   {
-    if (params.log.empty())
+    if (params.logFile.empty())
       return;
-    log_.open(params.log, std::ios::out | std::ios::trunc);
+    log_.open(params.logFile, std::ios::out | std::ios::trunc);
     if (!log_)
-      throw std::runtime_error("cannot open log file " + params.log);
+      throw std::runtime_error("cannot open log file " + params.logFile);
     WriteLocked(
         "# qrb_ros_adapter_stream_probe, ROS side. Columns: CLOCK_MONOTONIC seconds (the clock of "
         "the\n"
         "# HCM side's log too), line type, details. Latencies in ms; e2e: probe send to receive.\n"
         "# A frame line per frame. A monitor line every 5 s: rates over those 5 s, totals since "
         "the start.\n" +
-        FormatText("# run: fps %g, payload %llu bytes, duration %g s, warmup %g s", params.fps,
-            U64(params.payloadBytes), params.duration, params.warmup));
+        FormatText("# run: fps %g, duration %g s, warmup %g s", params.fps, params.duration,
+            params.warmup));
     WriteLocked(LogPrefix(MonotonicNowNs(), "flow") + FlowText(flow, false));
   }
 
@@ -1553,7 +1578,7 @@ public:
   {
     const rclcpp::QoS qos = MakeQos(flow);
     if (sender) {
-      source_.emplace(params.payloadBytes, flow.depth, streamTag_);
+      source_.emplace(params.size, flow.depth, streamTag_);
       rclcpp::PublisherOptions options;
       options.event_callbacks.incompatible_qos_callback =
           [&recorder](rclcpp::QOSOfferedIncompatibleQoSInfo & info) {
@@ -1663,20 +1688,19 @@ RosStreamProbeNode::RosStreamProbeNode(const rclcpp::NodeOptions & options)
   // How this run is set up; --help and `ros2 param describe` explain the parameters.
   RCLCPP_INFO(get_logger(),
       "the ROS side of a probed stream through the ROS IPC Bridge\n"
-      "  params file     %s\n"
       "  adapter config  %s\n"
       "  flow            direction %d (%s, this side %s), %s on %s (stream tag 0x%08x)\n"
       "                  QoS %s, %s, depth %u\n"
-      "  run             fps %g%s, payload %llu bytes, duration %g s%s, warmup %g s, log %s",
-      get_parameter("params_file").as_string().c_str(), params_.adapterConfig.c_str(),
-      static_cast<int>(flow_.direction),
+      "  run             fps %g%s, %s, duration %g s%s, warmup %g s, log file %s",
+      params_.adapterConfig.c_str(), static_cast<int>(flow_.direction),
       flow_.direction == ProbeDirection::kHcmToRos ? "HCM to ROS" : "ROS to HCM",
       sender_ ? "sends" : "receives", ShortContractName(flow_.contract).c_str(),
       flow_.topic.c_str(), StreamTagOf(flow_.topic), flow_.reliability.c_str(),
       flow_.durability.c_str(), flow_.depth, params_.fps, params_.fps == 0.0 ? " (unlimited)" : "",
-      static_cast<unsigned long long>(params_.payloadBytes), params_.duration,
-      params_.duration == 0.0 ? " (until unloaded or a signal)" : "", params_.warmup,
-      params_.log.empty() ? "none" : params_.log.c_str());
+      sender_ ? FormatText("payload %llu bytes a frame", U64(endpoint_->PayloadBytes())).c_str() :
+                "payload as received",
+      params_.duration, params_.duration == 0.0 ? " (until unloaded or a signal)" : "",
+      params_.warmup, params_.logFile.empty() ? "none" : params_.logFile.c_str());
 
   tickTimer_ = create_wall_timer(std::chrono::seconds(1), [this]() { Tick(); });
   if (sender_)
@@ -1727,21 +1751,12 @@ void RosStreamProbeNode::LoadParams()
     throw std::runtime_error(std::string("cannot find the default configs: ") + error.what());
   }
 
-  std::string paramsFile = configDir + "/stream_probe.json";
-  const auto file = overrides.find("params_file");
-  if (file != overrides.end()) {
-    if (file->second.get_type() != rclcpp::ParameterType::PARAMETER_STRING)
-      throw std::invalid_argument("ROS parameter 'params_file' must be a string");
-    paramsFile = file->second.get<std::string>();
-  }
-
   ProbeParams params = DefaultParams(configDir);
-  ApplyJsonFile(params, paramsFile);
 
   nlohmann::json fromRos = nlohmann::json::object();
   for (const auto & [name, value] : overrides) {
     // Parameters of rclcpp itself, already declared, and QoS overrides are not ours.
-    if (name == "params_file" || has_parameter(name) || name.rfind("qos_overrides.", 0) == 0)
+    if (has_parameter(name) || name.rfind("qos_overrides.", 0) == 0)
       continue;
     switch (value.get_type()) {
       case rclcpp::ParameterType::PARAMETER_BOOL:
@@ -1780,17 +1795,15 @@ void RosStreamProbeNode::LoadParams()
 
   params_ = params;
   flow_ = flow;
-  DeclareEffectiveParams(paramsFile);
+  DeclareEffectiveParams();
 }
 
-void RosStreamProbeNode::DeclareEffectiveParams(const std::string & paramsFile)
+void RosStreamProbeNode::DeclareEffectiveParams()
 {
   // Visible with `ros2 param`, but changing them has no effect: read-only.
   rcl_interfaces::msg::ParameterDescriptor descriptor;
   descriptor.read_only = true;
   descriptor.dynamic_typing = true;
-  descriptor.description = DescribeParam("params_file");
-  declare_parameter("params_file", rclcpp::ParameterValue(paramsFile), descriptor);
   // A named object: items() refers to it, and a temporary would end before the loop.
   const nlohmann::json effective = ToJson(params_);
   for (const auto & [key, value] : effective.items()) {

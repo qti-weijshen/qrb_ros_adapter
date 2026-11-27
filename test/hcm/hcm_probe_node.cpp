@@ -11,6 +11,7 @@
 #include <array>
 #include <atomic>
 #include <cstring>
+#include <limits>
 #include <mutex>
 #include <nlohmann/json.hpp>
 #include <string>
@@ -20,6 +21,7 @@
 #include "QC/Node/Ifs/QCNodeConfigIfs.hpp"
 #include "QC/Node/NodeBase.hpp"
 #include "qrb_ros_adapter/hcm_ipc_adapter/flow_client/hcm_dma_buffer.hpp"
+#include "qrb_ros_adapter/ipc_runtime/contract_validation.hpp"
 
 namespace qrb::adapter::stream_probe
 {
@@ -34,7 +36,8 @@ namespace qrb::adapter::stream_probe
 struct HcmSenderState
 {
   std::uint32_t streamTag{0};
-  std::uint64_t payloadBytes{0};
+  /** The payload bytes Stamp() wrote into the latest frame, for the Contracts that vary in size. */
+  std::uint64_t sentBytes{0};
   /**
    * The buffers that already hold the pattern, so it is written once per
    * buffer of a host that cycles through a few.
@@ -70,13 +73,19 @@ inline constexpr bool kAlwaysFalseHcm = false;
  * @brief The probe in descriptor `DescriptorT`. Specialize it for the
  * descriptor of every QRB_CONTRACT_MAPPING entry, with:
  *
- *   // Empty if `payloadBytes` suits the Contract, else why not.
- *   static std::string CheckPayloadBytes( std::uint64_t payloadBytes );
- *   // The payload bytes of one sent frame.
+ *   // The payload bytes of the frame Stamp() just sent.
  *   static std::uint64_t SentBytes( const HcmSenderState & );
  *   static HcmStampResult Stamp( DescriptorT &, HcmSenderState &, std::uint64_t sequence );
  *   static FrameReading Check( const DescriptorT &, std::uint32_t streamTag,
  *       std::uint64_t &payloadBytes );
+ *
+ * and, for a descriptor whose buffer the host sizes or lays out per frame:
+ *
+ *   // Bytes of the buffer a frame of `size` needs, to send or to receive;
+ *   // `why` tells when `size` does not suit. Without it: 0, no buffer.
+ *   static std::uint64_t BufferBytes( const ProbeFrameSize &size, std::string &why );
+ *   // Ready the descriptor of a frame before the host offers it. Without it: nothing.
+ *   static void Prepare( DescriptorT &, const ProbeFrameSize &size );
  *
  * Stamp() takes the send time itself, as late as it can, and keeps it in
  * `HcmSenderState::lastSendNs`.
@@ -96,8 +105,6 @@ struct HcmProbeSample<adapter::PoseHcmDescriptor>
 {
   using Descriptor = adapter::PoseHcmDescriptor;
   static constexpr const char * kFrameId = "stream_probe";
-
-  static std::string CheckPayloadBytes(std::uint64_t) { return {}; }
 
   static std::uint64_t SentBytes(const HcmSenderState &)
   {
@@ -152,8 +159,6 @@ struct HcmProbeSample<adapter::OdometryHcmDescriptor>
   static constexpr const char * kChildFrameId = "stream_probe_base";
   static constexpr double kTwistCovarianceMarker = 0.5;
 
-  static std::string CheckPayloadBytes(std::uint64_t) { return {}; }
-
   static std::uint64_t SentBytes(const HcmSenderState &)
   {
     return sizeof(std::declval<const Descriptor &>().poseWithCovariance.covariance);
@@ -205,8 +210,6 @@ struct HcmProbeSample<adapter::TwistHcmDescriptor>
   using Descriptor = adapter::TwistHcmDescriptor;
   static constexpr const char * kFrameId = "stream_probe";
   using Values = std::array<double, kMinProbeDoubles>;
-
-  static std::string CheckPayloadBytes(std::uint64_t) { return {}; }
 
   static std::uint64_t SentBytes(const HcmSenderState &) { return sizeof(Values); }
 
@@ -261,8 +264,6 @@ struct HcmProbeSample<adapter::TFMessageHcmDescriptor>
   static constexpr const char * kFrameId = "stream_probe";
   static constexpr std::uint32_t kTransforms = 4;
   using Values = std::array<double, kMinProbeDoubles>;
-
-  static std::string CheckPayloadBytes(std::uint64_t) { return {}; }
 
   static std::uint64_t SentBytes(const HcmSenderState &) { return sizeof(Values); }
 
@@ -369,8 +370,6 @@ struct HcmProbeSample<adapter::JointStateHcmDescriptor>
   static constexpr const char * kFrameId = "stream_probe";
   static constexpr std::uint32_t kJoints = 3;
   using Values = std::array<double, kMinProbeDoubles>;
-
-  static std::string CheckPayloadBytes(std::uint64_t) { return {}; }
 
   static std::uint64_t SentBytes(const HcmSenderState &) { return sizeof(Values); }
 
@@ -497,8 +496,6 @@ struct HcmProbeSample<adapter::PoseStampedHcmDescriptor>
   static constexpr const char * kFrameId = "stream_probe";
   using Values = hcm_pose_probe::Values;
 
-  static std::string CheckPayloadBytes(std::uint64_t) { return {}; }
-
   static std::uint64_t SentBytes(const HcmSenderState &) { return sizeof(Values); }
 
   static HcmStampResult Stamp(Descriptor & pose, HcmSenderState & state, std::uint64_t sequence)
@@ -544,8 +541,6 @@ struct HcmProbeSample<adapter::PoseArrayHcmDescriptor>
   static constexpr const char * kFrameId = "stream_probe";
   static constexpr std::uint32_t kPoses = 4;
   using Values = hcm_pose_probe::Values;
-
-  static std::string CheckPayloadBytes(std::uint64_t) { return {}; }
 
   static std::uint64_t SentBytes(const HcmSenderState &) { return sizeof(Values); }
 
@@ -653,8 +648,6 @@ struct HcmProbeSample<adapter::Vector3StampedHcmDescriptor>
   static constexpr const char * kFrameId = "stream_probe";
   using Values = std::array<double, kTripleDoubles>;
 
-  static std::string CheckPayloadBytes(std::uint64_t) { return {}; }
-
   static std::uint64_t SentBytes(const HcmSenderState &) { return sizeof(Values); }
 
   static HcmStampResult Stamp(Descriptor & vector, HcmSenderState & state, std::uint64_t sequence)
@@ -697,8 +690,6 @@ struct HcmProbeSample<adapter::ImuHcmDescriptor>
 {
   using Descriptor = adapter::ImuHcmDescriptor;
   static constexpr const char * kFrameId = "stream_probe";
-
-  static std::string CheckPayloadBytes(std::uint64_t) { return {}; }
 
   static std::uint64_t SentBytes(const HcmSenderState &)
   {
@@ -746,7 +737,10 @@ struct HcmProbeSample<adapter::ImuHcmDescriptor>
 
 // --- sensor.v1.PointCloud2 (DMA-BUF) ------------------------------------------
 
-/** One row of `payload_bytes / 16` points x, y, z, intensity (FLOAT32). */
+/**
+ * One row of points x, y, z, intensity (FLOAT32) over the whole buffer of
+ * `point_cloud_bytes`; a receiver takes any PointCloud2 that fits the buffer.
+ */
 template <>
 struct HcmProbeSample<adapter::PointCloudHcmDescriptor>
 {
@@ -756,20 +750,23 @@ struct HcmProbeSample<adapter::PointCloudHcmDescriptor>
   static constexpr const char * kFieldNames[] = {"x", "y", "z", "intensity"};
   static constexpr std::size_t kFieldCount = sizeof(kFieldNames) / sizeof(kFieldNames[0]);
 
-  static std::string CheckPayloadBytes(std::uint64_t payloadBytes)
+  static std::uint64_t BufferBytes(const ProbeFrameSize & size, std::string & why)
   {
-    if (payloadBytes >= kMinPayloadBytes && payloadBytes % kPointStep == 0)
-      return {};
-    return "'payload_bytes' of PointCloud2 must be a multiple of " + std::to_string(kPointStep) +
-           " and at least " + std::to_string(kMinPayloadBytes);
+    if (size.pointCloudBytes < kMinPayloadBytes || size.pointCloudBytes % kPointStep != 0)
+      why = "'point_cloud_bytes' of PointCloud2 must be a multiple of " +
+            std::to_string(kPointStep) + " and at least " + std::to_string(kMinPayloadBytes);
+    return size.pointCloudBytes;
   }
 
-  static std::uint64_t SentBytes(const HcmSenderState & state) { return state.payloadBytes; }
+  static std::uint64_t SentBytes(const HcmSenderState & state) { return state.sentBytes; }
 
   static HcmStampResult Stamp(Descriptor & cloud, HcmSenderState & state, std::uint64_t sequence)
   {
-    const std::size_t bytes = static_cast<std::size_t>(state.payloadBytes);
-    if (cloud.pBuf == nullptr || cloud.offset > cloud.size || cloud.size - cloud.offset < bytes)
+    if (cloud.pBuf == nullptr || cloud.offset > cloud.size)
+      return HcmStampResult::kBadBuffer;
+    const std::size_t bytes =
+        static_cast<std::size_t>((cloud.size - cloud.offset) / kPointStep * kPointStep);
+    if (bytes < kMinPayloadBytes || bytes > std::numeric_limits<std::uint32_t>::max())
       return HcmStampResult::kBadBuffer;
     auto * data = static_cast<std::uint8_t *>(cloud.GetDataPtr());
     int fd = -1;
@@ -793,6 +790,7 @@ struct HcmProbeSample<adapter::PointCloudHcmDescriptor>
     if (adapter::EndDmaBufCpuWrite(fd) != adapter::Status::kOk)
       return HcmStampResult::kSyncFailed;
 
+    state.sentBytes = bytes;
     cloud.validSize = bytes;
     cloud.height = 1;
     cloud.width = static_cast<std::uint32_t>(bytes / kPointStep);
@@ -865,10 +863,11 @@ private:
 // --- sensor.v1.ImageLayout (DMA-BUF) ------------------------------------------
 
 /**
- * A kProbeImageWidth x ProbeImageHeight( payload_bytes ) rgb8 Camera frame,
- * whose rows are kProbeImageHcmStride apart as the QCNode Camera sample
- * allocates them. Its timestamp is the camera qtimer, which the Adapter
- * converts to and from ROS time.
+ * An rgb8 Camera frame of the width and height Prepare() gave the descriptor,
+ * whose rows are ProbeImageHcmStride( width ) apart as the QCNode Camera
+ * sample allocates them. Its timestamp is the camera qtimer, which the Adapter
+ * converts to and from ROS time. A receiver's descriptor has no layout, so it
+ * takes the size and the layout of any ROS image that fits the buffer.
  */
 template <>
 struct HcmProbeSample<adapter::ImageHcmDescriptor>
@@ -877,24 +876,45 @@ struct HcmProbeSample<adapter::ImageHcmDescriptor>
   /** @brief How far a received timestamp may be from the qtimer now. */
   static constexpr std::uint64_t kStampToleranceNs = 5000000000ull;
 
-  static std::string CheckPayloadBytes(std::uint64_t payloadBytes)
+  static std::uint64_t BufferBytes(const ProbeFrameSize & size, std::string & why)
   {
-    if (ProbeImageHeight(payloadBytes) > 0)
-      return {};
-    return "'payload_bytes' of ImageLayout must hold at least one row of " +
-           std::to_string(kProbeImageHcmStride) + " bytes";
+    why = CheckImageSize(size.imageWidth, size.imageHeight);
+    if (!why.empty())
+      return 0;
+    adapter::ImageLayout ros;
+    if (!adapter::CanonicalImageLayout(size.imageWidth, size.imageHeight, "rgb8", ros)) {
+      why = "'image_width' and 'image_height' are too large for a ROS image";
+      return 0;
+    }
+    return std::max(ProbeImageHcmStride(size.imageWidth) * size.imageHeight, ros.storageSize);
   }
 
-  static std::uint64_t SentBytes(const HcmSenderState & state)
+  static void Prepare(Descriptor & image, const ProbeFrameSize & size)
   {
-    return kProbeImageRowBytes * ProbeImageHeight(state.payloadBytes);
+    image.format = QC::QC_IMAGE_FORMAT_RGB888;
+    image.width = size.imageWidth;
+    image.height = size.imageHeight;
+    image.batchSize = 1;
+    image.numPlanes = 0;
+    for (std::uint32_t i = 0; i < QC_NUM_IMAGE_PLANES; ++i) {
+      image.stride[i] = 0;
+      image.actualHeight[i] = 0;
+      image.planeBufSize[i] = 0;
+    }
+    image.validSize = 0;
   }
+
+  static std::uint64_t SentBytes(const HcmSenderState & state) { return state.sentBytes; }
 
   static HcmStampResult Stamp(Descriptor & image, HcmSenderState & state, std::uint64_t sequence)
   {
-    const std::uint32_t height = ProbeImageHeight(state.payloadBytes);
-    const std::uint64_t storage = kProbeImageHcmStride * height;
-    if (image.pBuf == nullptr || image.offset > image.size || image.size - image.offset < storage)
+    const std::uint32_t width = image.width;
+    const std::uint32_t height = image.height;
+    const std::uint64_t stride = ProbeImageHcmStride(width);
+    const std::uint64_t storage = stride * height;
+    if (!CheckImageSize(width, height).empty() ||
+        storage > std::numeric_limits<std::uint32_t>::max() || image.pBuf == nullptr ||
+        image.offset > image.size || image.size - image.offset < storage)
       return HcmStampResult::kBadBuffer;
     auto * data = static_cast<std::uint8_t *>(image.GetDataPtr());
     int fd = -1;
@@ -902,8 +922,6 @@ struct HcmProbeSample<adapter::ImageHcmDescriptor>
       return HcmStampResult::kBadBuffer;
 
     image.format = QC::QC_IMAGE_FORMAT_RGB888;
-    image.width = kProbeImageWidth;
-    image.height = height;
     image.batchSize = 1;
     image.numPlanes = 1;
     for (std::uint32_t i = 0; i < QC_NUM_IMAGE_PLANES; ++i) {
@@ -911,7 +929,7 @@ struct HcmProbeSample<adapter::ImageHcmDescriptor>
       image.actualHeight[i] = 0;
       image.planeBufSize[i] = 0;
     }
-    image.stride[0] = static_cast<std::uint32_t>(kProbeImageHcmStride);
+    image.stride[0] = static_cast<std::uint32_t>(stride);
     image.actualHeight[0] = height;
     image.planeBufSize[0] = static_cast<std::uint32_t>(storage);
     const ProbeImageLayout layout = LayoutOf(image);
@@ -933,6 +951,7 @@ struct HcmProbeSample<adapter::ImageHcmDescriptor>
     if (adapter::EndDmaBufCpuWrite(fd) != adapter::Status::kOk)
       return HcmStampResult::kSyncFailed;
 
+    state.sentBytes = layout.LogicalBytes();
     image.validSize = static_cast<std::size_t>(storage);
     image.timestamp = adapter::SampleHcmClocks().qtimerNs;
     image.timestampQGPTP = 0;
@@ -965,7 +984,7 @@ struct HcmProbeSample<adapter::ImageHcmDescriptor>
     }
     // The sender is the ROS probe: its rgb8 image, stamped with ROS time, which
     // the Adapter converted to the qtimer.
-    if (image.format != QC::QC_IMAGE_FORMAT_RGB888 || image.width != kProbeImageWidth ||
+    if (image.format != QC::QC_IMAGE_FORMAT_RGB888 ||
         !WithinNs(image.timestamp, adapter::SampleHcmClocks().qtimerNs, kStampToleranceNs))
       reading.check = FrameCheck::kBadLayout;
     return reading;
@@ -1056,8 +1075,8 @@ struct HcmBox3d
 };
 
 /**
- * The frame of detection_probe as the records in the buffer of a detection descriptor. Unlike a
- * point cloud, the buffer holds only the two records; `payload_bytes` just has to fit them.
+ * The frame of detection_probe as the records in the buffer of a detection descriptor, which
+ * holds just the records of its kDetections detections.
  */
 template <typename Descriptor, typename Record, typename BoxTraits>
 struct HcmDetectionProbe
@@ -1066,13 +1085,9 @@ struct HcmDetectionProbe
   static constexpr std::uint64_t kPayloadBytes =
       detection_probe::kCovarianceDoubles * sizeof(double);
 
-  static std::string CheckPayloadBytes(std::uint64_t payloadBytes)
+  static std::uint64_t BufferBytes(const ProbeFrameSize &, std::string &)
   {
-    if (payloadBytes >= kRecordBytes)
-      return {};
-    return "'payload_bytes' of a detection Contract must hold " +
-           std::to_string(detection_probe::kDetections) + " detections: at least " +
-           std::to_string(kRecordBytes);
+    return Descriptor::CalcBufferSize(static_cast<std::uint32_t>(detection_probe::kDetections));
   }
 
   static std::uint64_t SentBytes(const HcmSenderState &) { return kPayloadBytes; }
@@ -1206,7 +1221,9 @@ constexpr std::uint32_t kMonitoringEntries = 7;
 struct ContractOps
 {
   const char * typeName;
-  std::string (*checkPayloadBytes)(std::uint64_t);
+  std::uint64_t (*bufferBytes)(const ProbeFrameSize & size, std::string & why);
+  /** False: `buffer` is not the Contract's descriptor. */
+  bool (*prepare)(QC::Memory::QCBufferDescriptorBase_t & buffer, const ProbeFrameSize & size);
   std::uint64_t (*sentBytes)(const HcmSenderState &);
   /** False: `buffer` is not the Contract's descriptor. */
   bool (*stamp)(QC::Memory::QCBufferDescriptorBase_t & buffer,
@@ -1218,6 +1235,44 @@ struct ContractOps
       FrameReading & reading,
       std::uint64_t & payloadBytes);
 };
+
+template <typename Sample, typename = void>
+struct HasBufferBytes : std::false_type
+{
+};
+template <typename Sample>
+struct HasBufferBytes<Sample, std::void_t<decltype(&Sample::BufferBytes)>> : std::true_type
+{
+};
+
+template <typename Sample, typename = void>
+struct HasPrepare : std::false_type
+{
+};
+template <typename Sample>
+struct HasPrepare<Sample, std::void_t<decltype(&Sample::Prepare)>> : std::true_type
+{
+};
+
+template <typename DescriptorT>
+std::uint64_t BufferBytesOf(const ProbeFrameSize & size, std::string & why)
+{
+  if constexpr (HasBufferBytes<HcmProbeSample<DescriptorT>>::value)
+    return HcmProbeSample<DescriptorT>::BufferBytes(size, why);
+  else
+    return 0;
+}
+
+template <typename DescriptorT>
+bool PrepareAs(QC::Memory::QCBufferDescriptorBase_t & buffer, const ProbeFrameSize & size)
+{
+  auto * descriptor = dynamic_cast<DescriptorT *>(&buffer);
+  if (descriptor == nullptr)
+    return false;
+  if constexpr (HasPrepare<HcmProbeSample<DescriptorT>>::value)
+    HcmProbeSample<DescriptorT>::Prepare(*descriptor, size);
+  return true;
+}
 
 template <typename DescriptorT>
 bool StampAs(QC::Memory::QCBufferDescriptorBase_t & buffer,
@@ -1247,7 +1302,7 @@ bool CheckAs(const QC::Memory::QCBufferDescriptorBase_t & buffer,
 
 const ContractOps kContracts[] = {
 #define QRB_CONTRACT_MAPPING(Id, TypeName, Payload, ContractT, DescriptorT, ...)                   \
-  {TypeName, &HcmProbeSample<DescriptorT>::CheckPayloadBytes,                                      \
+  {TypeName, &BufferBytesOf<DescriptorT>, &PrepareAs<DescriptorT>,                                 \
       &HcmProbeSample<DescriptorT>::SentBytes, &StampAs<DescriptorT>, &CheckAs<DescriptorT>},
 #include "qrb_ros_adapter/ipc_runtime/contract_mappings.def"
 #undef QRB_CONTRACT_MAPPING
@@ -1279,7 +1334,6 @@ struct ProbeNodeSettings
   bool sender{false};
   const ContractOps * contract{nullptr};
   std::string topic{ProbeFlow{}.topic};
-  std::uint64_t payloadBytes{ProbeParams{}.payloadBytes};
   double warmup{0.0};
   std::uint32_t globalBufferId{0};
 };
@@ -1304,7 +1358,6 @@ QC::QCStatus_e ParseSettings(const std::string & json,
     settings.sender = static_cast<ProbeDirection>(direction) == ProbeDirection::kHcmToRos;
     settings.id = node.value("id", settings.id);
     settings.topic = node.value("topic", settings.topic);
-    settings.payloadBytes = node.value("payload_bytes", settings.payloadBytes);
     settings.warmup = node.value("warmup", settings.warmup);
     if (node.contains("globalBufferIdMap"))
       settings.globalBufferId = node["globalBufferIdMap"].at(0).at("id").get<std::uint32_t>();
@@ -1318,13 +1371,6 @@ QC::QCStatus_e ParseSettings(const std::string & json,
     errors +=
         "unsupported \"contract\" " + contract + "; supported: " + SupportedContracts() + "; ";
     return QC::QC_STATUS_UNSUPPORTED;
-  }
-  if (settings.sender) {
-    const std::string why = settings.contract->checkPayloadBytes(settings.payloadBytes);
-    if (!why.empty()) {
-      errors += why + "; ";
-      return QC::QC_STATUS_BAD_ARGUMENTS;
-    }
   }
   out = std::move(settings);
   return QC::QC_STATUS_OK;
@@ -1355,9 +1401,8 @@ public:
   // Both GetOptions() forms, as in the Adapter, for either QCNode SDK.
   const std::string & GetOptions()
   {
-    static const std::string options =
-        R"({"required":["name","direction","contract"],)"
-        R"("optional":["id","topic","payload_bytes","warmup","globalBufferIdMap"]})";
+    static const std::string options = R"({"required":["name","direction","contract"],)"
+                                       R"("optional":["id","topic","warmup","globalBufferIdMap"]})";
     return options;
   }
   QC::QCStatus_e GetOptions(std::string & options)
@@ -1525,7 +1570,6 @@ public:
     // running sees one stream, not a restart it would count as reordered.
     senderState_ = HcmSenderState{};
     senderState_.streamTag = StreamTagOf(settings.topic);
-    senderState_.payloadBytes = settings.payloadBytes;
     state_.store(QC::QC_OBJECT_STATE_READY);
     return QC::QC_STATUS_OK;
   }
@@ -1611,5 +1655,29 @@ private:
 const QC::Node::NodeRegistrar<HcmStreamProbeNode> g_registerStreamProbe{kHcmStreamProbeNodeType};
 
 }  // namespace
+
+std::uint64_t HcmProbeBufferBytes(const std::string & contract,
+    const ProbeFrameSize & size,
+    std::string & why)
+{
+  why.clear();
+  const ContractOps * ops = FindContract(contract);
+  if (ops == nullptr) {
+    why = "unsupported contract " + contract + "; supported: " + SupportedContracts();
+    return 0;
+  }
+  const std::uint64_t bytes = ops->bufferBytes(size, why);
+  if (why.empty() && bytes > std::numeric_limits<std::uint32_t>::max())
+    why = "a frame of " + std::to_string(bytes) + " bytes is too large";
+  return why.empty() ? bytes : 0;
+}
+
+bool HcmProbePrepareFrame(const std::string & contract,
+    QC::Memory::QCBufferDescriptorBase_t & descriptor,
+    const ProbeFrameSize & size)
+{
+  const ContractOps * ops = FindContract(contract);
+  return ops != nullptr && ops->prepare(descriptor, size);
+}
 
 }  // namespace qrb::adapter::stream_probe

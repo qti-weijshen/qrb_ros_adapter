@@ -18,13 +18,15 @@ from launch_ros.descriptions import ComposableNode
 ARGUMENTS = {
     'adapter_config': "the Adapter's static config, given to the HCM side too",
     'fps': 'frames per second a sender sends, 0 for no pause',
-    'payload_bytes': "a sender's payload",
+    'point_cloud_bytes': 'bytes of a PointCloud2 a sender sends',
+    'image_width': 'width of an rgb8 ImageLayout a sender sends',
+    'image_height': 'height of an rgb8 ImageLayout a sender sends',
     'duration': 'seconds to run, 0 until stopped',
     'warmup': 'seconds a receiver does not measure',
-    'log': 'text log file',
+    'log_file': 'text log file',
 }
 # A launch argument is a string; the probe takes these as numbers only.
-NUMBERS = {'fps', 'payload_bytes', 'duration', 'warmup'}
+NUMBERS = {'fps', 'point_cloud_bytes', 'image_width', 'image_height', 'duration', 'warmup'}
 
 
 def typed(name, value):

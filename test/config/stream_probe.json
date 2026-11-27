@@ -1,9 +1,0 @@
-{
-  "adapter_config": "adapter_point_cloud_h2r.json",
-  "fps": 30,
-  "payload_bytes": 1048576,
-  "buffer_bytes": 33554432,
-  "duration": 0,
-  "warmup": 0,
-  "log": ""
-}

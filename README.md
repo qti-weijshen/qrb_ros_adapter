@@ -51,28 +51,19 @@ The Flow is set in the QCNode static config:
 | `ros_topic` | yes | ROS topic. |
 | `qos_profile` | no | `reliability` (`reliable`/`best_effort`), `durability` (`volatile`/`transient_local`), `depth` (1–32); defaults to `rclcpp::QoS(10)`. |
 
-The supported Contracts, each with its HCM descriptor, ROS message and payload
-class, are the entries of
+The supported Contracts are listed in
 [contract_mappings.def](ipc_runtime/include/qrb_ros_adapter/ipc_runtime/contract_mappings.def).
-A DmaBuf Contract carries its payload in a DMA-BUF behind the descriptor. The
-host allocates that storage: for HCM to ROS (`direction` 0) the source must be a
-local DMA-BUF; for ROS to HCM (`direction` 1) the host receives into a DMA-BUF it
-offers, or into heap storage. A TFMessage is Inline but variable-length, so its
-transforms need host storage in the HCM descriptor (heap or a local DMA-BUF). A
-frame name longer than the HCM descriptor holds is rejected, not truncated.
+A DmaBuf Contract carries its payload in a DMA-BUF the host allocates; from HCM
+to ROS it must be a local DMA-BUF. A TFMessage needs host storage for its
+transforms in the descriptor.
 
 Monitoring reports `sessionConnected`, `frameCount`, `errorCount`,
-`last/average/min/maxLatencyNs` and `noDataCount`. `frameCount` counts the calls
-that sent or received a frame, or failed; a ROS to HCM call that found no new
-ROS message counts only in `noDataCount`. A rejected config, and an
-error that fails `Initialize()` or `Start()` or closes the Session, is logged
-with its reason through the QCNode default logger.
+`last/average/min/maxLatencyNs` and `noDataCount`, the ROS to HCM calls that
+found no new message. Errors are logged through the QCNode default logger.
 
-The ROS IPC Bridge takes no parameters and adds one ROS node for each
-registered Flow. One Bridge runs per device and serves up to 32 Flows at once;
-give each Flow its own `name`, or the Bridge rejects it. Flows of one direction
-may share a `ros_topic`; a Flow of the same Contract in the other direction on
-that topic is rejected, as it would loop the messages back.
+One Bridge runs per device and serves up to 32 Flows, each with its own `name`.
+Flows of one direction may share a `ros_topic`; the Bridge rejects a Flow of the
+same Contract in the other direction on that topic.
 
 ## Supported targets
 
@@ -100,35 +91,36 @@ direction 0 publishes it, direction 1 fills it with the oldest ROS message
 waiting. Up to `depth` messages wait, so a late call gets the next message
 instead of missing it.
 
-`SampleIpcAdapter` is such a host:
+`SampleIpcAdapter` is such a host. It passes the frames of another sample, so
+run it together with one, such as the `StreamProbe` of the [Test](#test):
 
 ```bash
 qcrun QCNodeSampleApp -n adapter -t IpcAdapter [-k <setting> -v <value> ...]
 ```
 
-### Sample settings
-
-The `IpcAdapter` and `StreamProbe` samples take `-k <setting> -v <value>`; the
-ROS probe of the [Test](#test) takes `<setting>:=<value>` on its launch.
+<details>
+<summary>IpcAdapter settings</summary>
 
 | Setting | Default | Description |
 | --- | --- | --- |
-| `contract_type`, `direction`, `ros_topic` | `PointCloud2`, `0`, per Contract | IpcAdapter: the static config fields above. |
-| `reliability`, `durability`, `depth` | `rclcpp::QoS(10)` | IpcAdapter: the `qos_profile` fields above. |
-| `adapter_config` | StreamProbe: required; ROS probe: `adapter_point_cloud_h2r.json` | All: a static config file; on IpcAdapter it replaces the two rows above. |
-| `input_topic` / `output_topic` | | IpcAdapter, StreamProbe: takes frames from / gives frames to another sample. |
-| `fps` | `30` | All: frames per second a sender sends, or the IpcAdapter fetches from ROS, `0` for no pause. With `output_topic`, the IpcAdapter fetches every waiting message at once and waits `1/fps` s only when none waits. |
-| `payload_bytes` | `1048576` | All: DMA-BUF payload of a DmaBuf Contract a sender sends. |
-| `duration` | `0` | ROS probe: seconds to run, `0` until stopped. |
-| `log` | | IpcAdapter, ROS probe: text log file. IpcAdapter writes what it prints and a monitor line every 10 s. |
+| `adapter_config` | | A static config file; it replaces the six settings below. |
+| `contract_type`, `direction`, `ros_topic` | `PointCloud2`, `0`, per Contract | The static config fields above. |
+| `reliability`, `durability`, `depth` | `rclcpp::QoS(10)` | The `qos_profile` fields above. |
+| `input_topic`, `output_topic` | | DataBroker topics of the frames it takes from and gives to another sample, such as the StreamProbe. From HCM to ROS, it sends the frames of `input_topic`. From ROS to HCM, it fills the frames of `input_topic` and gives them on `output_topic`. `input_topic` is required, and `output_topic` too from ROS to HCM. |
+| `log_file` | | Text log file of what it prints and a monitor line every 10 s. |
 
-Each line of the `IpcAdapter` log starts with the CLOCK_MONOTONIC time and the
-sample name. `fps` is the rate of the last 10000 frames; the monitor line
-printed at Stop also gives `sessionConnected` and the last, min and max latency.
+From HCM to ROS, it sends each frame as it takes it. From ROS to HCM, it fetches
+every waiting message at once and tries again 1 ms later when none waits.
+
+Each line of the log file starts with the CLOCK_MONOTONIC time and the sample
+name. `fps` is the rate of the last 10000 frames; the monitor line printed at
+Stop also gives `sessionConnected` and the last, min and max latency.
 
 ```text
 [28087.995013214] [adapter]: monitor: frameCount=300, errorCount=0, averageLatencyNs=89399, noDataCount=0, fps=30.00
 ```
+
+</details>
 
 ## Build from source
 
@@ -152,8 +144,8 @@ The image needs the packages and ros2cli.
    ```bash
    CFG=/usr/ros/jazzy/share/qrb_ros_adapter_stream_probe/probe_configs
    qcrun QCNodeSampleApp -T 10 \
-     -n adapter -t IpcAdapter -k adapter_config -v $CFG/adapter_point_cloud_h2r.json -k input_topic -v /frames \
-     -n probe -t StreamProbe -k adapter_config -v $CFG/adapter_point_cloud_h2r.json -k output_topic -v /frames
+     -n adapter -t IpcAdapter -k adapter_config -v $CFG/adapter_point_cloud_h2r.json -k input_topic -v /adapter_in \
+     -n probe -t StreamProbe -k adapter_config -v $CFG/adapter_point_cloud_h2r.json -k output_topic -v /adapter_in
    ```
 
 For ROS to HCM, use `adapter_point_cloud_r2h.json` on both sides and list the
@@ -164,15 +156,52 @@ probe first:
 bash -c 'source /usr/ros/jazzy/setup.bash && ROS_HOME=/data/ros ros2 launch qrb_ros_adapter_stream_probe qrb_ros_adapter_stream_probe.launch.py adapter_config:=/usr/ros/jazzy/share/qrb_ros_adapter_stream_probe/probe_configs/adapter_point_cloud_r2h.json'
 # Terminal 2, with CFG set as above
 qcrun QCNodeSampleApp -T 10 \
-  -n probe -t StreamProbe -k adapter_config -v $CFG/adapter_point_cloud_r2h.json -k input_topic -v /frames \
-  -n adapter -t IpcAdapter -k adapter_config -v $CFG/adapter_point_cloud_r2h.json -k output_topic -v /frames
+  -n probe -t StreamProbe -k adapter_config -v $CFG/adapter_point_cloud_r2h.json -k output_topic -v /adapter_in -k input_topic -v /adapter_out \
+  -n adapter -t IpcAdapter -k adapter_config -v $CFG/adapter_point_cloud_r2h.json -k input_topic -v /adapter_in -k output_topic -v /adapter_out
 ```
 
 For another Contract, use its `adapter_<contract>_{h2r,r2h}.json` from the same
 directory, on both sides and in the same commands.
 
-The run passes when the HCM side prints `probe PASS`. The probe settings are
-in [Sample settings](#sample-settings).
+The run passes when the HCM side prints `probe PASS`. Each probe either sends
+or receives, by the `direction` of the static config.
+
+<details>
+<summary>StreamProbe settings</summary>
+
+| Setting | Default | Description |
+| --- | --- | --- |
+| `adapter_config` | required | The static config, the same file as the IpcAdapter's. |
+| `output_topic`, `input_topic` | required | DataBroker topics. From HCM to ROS, it gives the frames it sends on `output_topic` and takes no `input_topic`. From ROS to HCM, it gives empty frames on `output_topic` and checks the filled ones of `input_topic`. |
+| `fps` | `30` | Frames per second it sends from HCM to ROS, `0` for no pause. |
+| `point_cloud_bytes` | `1048576` | Bytes of each PointCloud2 it sends. From ROS to HCM, it sizes the buffers of its frames by it. |
+| `image_width`, `image_height` | `1928`, `160` | Size of each rgb8 ImageLayout it sends. From ROS to HCM, it sizes the buffers of its frames by them. |
+
+```bash
+qcrun QCNodeSampleApp -n probe -t StreamProbe [-k <setting> -v <value> ...]
+```
+
+</details>
+
+<details>
+<summary>ROS probe parameters</summary>
+
+| Parameter | Default | Description |
+| --- | --- | --- |
+| `adapter_config` | `adapter_point_cloud_h2r.json` in `probe_configs` | The static config, the same file as the HCM side's. |
+| `fps` | `30` | Frames per second it sends from ROS to HCM, `0` for no pause. |
+| `point_cloud_bytes` | `1048576` | Bytes of each PointCloud2 it sends from ROS to HCM. |
+| `image_width`, `image_height` | `1928`, `160` | Size of each rgb8 ImageLayout it sends from ROS to HCM. |
+| `duration` | `0` | Seconds to run, `0` until stopped. |
+| `log_file` | | Text log file of each frame, a monitor line every 5 s and the summary. |
+
+```bash
+ros2 launch qrb_ros_adapter_stream_probe qrb_ros_adapter_stream_probe.launch.py [<parameter>:=<value> ...]
+ros2 component load /qrb_ros_adapter_container qrb_ros_adapter_stream_probe qrb::adapter::stream_probe::RosStreamProbeNode [-p <parameter>:=<value> ...]
+ros2 run qrb_ros_adapter_stream_probe ros_stream_probe_node --ros-args [-p <parameter>:=<value> ...]
+```
+
+</details>
 
 ### Several Flows at once
 
@@ -201,8 +230,8 @@ and PoseStamped from ROS to HCM:
 
    ```bash
    qcrun QCNodeSampleApp -T 10 \
-     -n adapter -t IpcAdapter -k adapter_config -v $CFG/adapter_point_cloud_h2r.json -k input_topic -v /frames \
-     -n probe -t StreamProbe -k adapter_config -v $CFG/adapter_point_cloud_h2r.json -k output_topic -v /frames
+     -n adapter -t IpcAdapter -k adapter_config -v $CFG/adapter_point_cloud_h2r.json -k input_topic -v /adapter_in \
+     -n probe -t StreamProbe -k adapter_config -v $CFG/adapter_point_cloud_h2r.json -k output_topic -v /adapter_in
    ```
 
    In a third terminal:
@@ -210,8 +239,8 @@ and PoseStamped from ROS to HCM:
    ```bash
    CFG=/usr/ros/jazzy/share/qrb_ros_adapter_stream_probe/probe_configs
    qcrun QCNodeSampleApp -T 10 \
-     -n probe -t StreamProbe -k adapter_config -v $CFG/adapter_pose_stamped_r2h.json -k input_topic -v /frames \
-     -n adapter -t IpcAdapter -k adapter_config -v $CFG/adapter_pose_stamped_r2h.json -k output_topic -v /frames
+     -n probe -t StreamProbe -k adapter_config -v $CFG/adapter_pose_stamped_r2h.json -k output_topic -v /adapter_in -k input_topic -v /adapter_out \
+     -n adapter -t IpcAdapter -k adapter_config -v $CFG/adapter_pose_stamped_r2h.json -k input_topic -v /adapter_in -k output_topic -v /adapter_out
    ```
 
 Each terminal prints `probe PASS`. The probes stay loaded until the Bridge
