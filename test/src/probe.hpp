@@ -228,16 +228,24 @@ inline FrameReading CheckFrame(const std::uint8_t * data, std::size_t size, std:
 // two as well as the bytes.
 //
 
-/** @brief Width of a probe image: not a multiple of 128, so the two sides' strides differ. */
-constexpr std::uint32_t kProbeImageWidth = 1928;
-constexpr std::uint64_t kProbeImageRowBytes = kProbeImageWidth * 3;  // rgb8
-/** @brief The HCM row stride, ALIGN(width * 3, 16) as the QCNode Camera sample uses for rgb8. */
-constexpr std::uint64_t kProbeImageHcmStride = (kProbeImageRowBytes + 15) / 16 * 16;
+/** @brief Default probe image width: not a multiple of 128, so the two sides' strides differ. */
+constexpr std::uint32_t kDefaultImageWidth = 1928;
+/** @brief Default probe image height: its storage fits 1 MiB on either side. */
+constexpr std::uint32_t kDefaultImageHeight = 160;
 
-/** @brief Rows of a probe image whose HCM storage fits `payloadBytes`; 0 if none fits. */
-inline std::uint32_t ProbeImageHeight(std::uint64_t payloadBytes)
+/** @brief HCM row stride of an rgb8 image, ALIGN(width * 3, 16) as the QCNode Camera sample. */
+inline std::uint64_t ProbeImageHcmStride(std::uint32_t width)
 {
-  return static_cast<std::uint32_t>(payloadBytes / kProbeImageHcmStride);
+  return (static_cast<std::uint64_t>(width) * 3 + 15) / 16 * 16;
+}
+
+/** @brief Empty if a sender can send an rgb8 image of `width` x `height`, else why not. */
+inline std::string CheckImageSize(std::uint32_t width, std::uint32_t height)
+{
+  if (width > 0 && height > 0 && static_cast<std::uint64_t>(width) * 3 * height >= kMinPayloadBytes)
+    return {};
+  return "'image_width' x 'image_height' of ImageLayout must hold at least " +
+         std::to_string(kMinPayloadBytes) + " bytes of rgb8";
 }
 
 /** @brief Where the valid rows of one plane lie in a buffer. */
@@ -591,7 +599,7 @@ inline double NsToMs(std::uint64_t ns)
 }
 
 /**
- * @brief The start of a --log line: the CLOCK_MONOTONIC time in seconds, so
+ * @brief The start of a log_file line: the CLOCK_MONOTONIC time in seconds, so
  * the logs of both sides line up, and the line type.
  */
 inline std::string LogPrefix(std::uint64_t nowNs, const char * type)
@@ -826,7 +834,7 @@ struct ReceiverCounters
   std::uint64_t foreignStream{0};
 };
 
-// --- Text of the --log lines: counters that are 0 are left out, latencies in ms ---
+// --- Text of the log_file lines: counters that are 0 are left out, latencies in ms ---
 
 inline std::string SenderText(const SenderCounters & c)
 {
@@ -873,7 +881,7 @@ inline std::string LatencySummaryText(const LatencyHistogram & h)
 }
 
 /**
- * @brief One frame a probe sent or received: a `frame` line of the --log
+ * @brief One frame a probe sent or received: a `frame` line of the log_file
  * file. Times are CLOCK_MONOTONIC, so the logs of both sides line up.
  */
 struct FrameRecord
@@ -897,7 +905,7 @@ struct FrameRecord
 };
 
 /**
- * @brief The --log line of `frame`, without the newline: its sequence and, if
+ * @brief The log_file line of `frame`, without the newline: its sequence and, if
  * received, the end-to-end latency and anything unusual about it. `extra` is
  * appended, starting with two spaces.
  */
@@ -1016,15 +1024,22 @@ enum class ProbeDirection : int
 constexpr std::uint32_t kMaxDepth = 32;  // the product's kMaxQosDepth
 constexpr const char * kDefaultAdapterConfig = "adapter_point_cloud_h2r.json";
 
+/** @brief The size of a frame sent, for the Contracts that vary in size. */
+struct ProbeFrameSize
+{
+  std::uint64_t pointCloudBytes{1u << 20};       // bytes of points of a PointCloud2
+  std::uint32_t imageWidth{kDefaultImageWidth};  // rgb8 pixels of an ImageLayout
+  std::uint32_t imageHeight{kDefaultImageHeight};
+};
+
 struct ProbeParams
 {
-  std::string adapterConfig;             // the Adapter's static config
-  double fps{30.0};                      // frames per second, 0: unlimited
-  std::uint64_t payloadBytes{1u << 20};  // what a sender sends per frame
-  std::uint64_t bufferBytes{32u << 20};  // DMA buffer size of the HCM receiver (R2H)
-  double duration{0.0};                  // seconds, 0: until stopped
-  double warmup{0.0};                    // seconds
-  std::string log;                       // text log file, empty: none
+  std::string adapterConfig;  // the Adapter's static config
+  double fps{30.0};           // frames per second, 0: unlimited
+  ProbeFrameSize size;        // what a sender sends per frame
+  double duration{0.0};       // seconds, 0: until stopped
+  double warmup{0.0};         // seconds
+  std::string logFile;        // text log file, empty: none
 };
 
 /** @brief The built-in defaults; `configDir` holds the default configs. */
@@ -1035,24 +1050,13 @@ inline ProbeParams DefaultParams(const std::string & configDir)
   return params;
 }
 
-/** @brief The directory of `path`, or "." when it has none. */
-inline std::string DirectoryOf(const std::string & path)
-{
-  const std::size_t slash = path.rfind('/');
-  if (slash == std::string::npos)
-    return ".";
-  return slash == 0 ? "/" : path.substr(0, slash);
-}
-
 /**
- * @brief Apply the keys of JSON object `object` from `source` to `params`. A
- * relative path is taken relative to `baseDir`, or as given when it is empty.
+ * @brief Apply the keys of JSON object `object` from `source` to `params`.
  * @throws std::invalid_argument on an unknown key or a value of the wrong type.
  */
 inline void ApplyJson(ProbeParams & params,
     const nlohmann::json & object,
-    const std::string & source,
-    const std::string & baseDir = {})
+    const std::string & source)
 {
   if (!object.is_object())
     throw std::invalid_argument(source + ": not a JSON object");
@@ -1063,11 +1067,6 @@ inline void ApplyJson(ProbeParams & params,
     if (!value.is_string())
       fail(key, "a string");
     out = value.get<std::string>();
-  };
-  const auto path = [&](const std::string & key, const nlohmann::json & value, std::string & out) {
-    text(key, value, out);
-    if (!out.empty() && out[0] != '/' && !baseDir.empty())
-      out = baseDir + "/" + out;
   };
   const auto unsignedValue = [&](const std::string & key, const nlohmann::json & value,
                                  std::uint64_t maximum) -> std::uint64_t {
@@ -1090,40 +1089,27 @@ inline void ApplyJson(ProbeParams & params,
 
   for (const auto & [key, value] : object.items()) {
     if (key == "adapter_config")
-      path(key, value, params.adapterConfig);
+      text(key, value, params.adapterConfig);
     else if (key == "fps")
       params.fps = nonNegative(key, value);
-    else if (key == "payload_bytes")
-      params.payloadBytes = unsignedValue(key, value, std::numeric_limits<std::uint32_t>::max());
-    else if (key == "buffer_bytes")
-      params.bufferBytes = unsignedValue(key, value, std::numeric_limits<std::uint32_t>::max());
+    else if (key == "point_cloud_bytes")
+      params.size.pointCloudBytes =
+          unsignedValue(key, value, std::numeric_limits<std::uint32_t>::max());
+    else if (key == "image_width")
+      params.size.imageWidth = static_cast<std::uint32_t>(
+          unsignedValue(key, value, std::numeric_limits<std::uint32_t>::max()));
+    else if (key == "image_height")
+      params.size.imageHeight = static_cast<std::uint32_t>(
+          unsignedValue(key, value, std::numeric_limits<std::uint32_t>::max()));
     else if (key == "duration")
       params.duration = nonNegative(key, value);
     else if (key == "warmup")
       params.warmup = nonNegative(key, value);
-    else if (key == "log")
-      path(key, value, params.log);
+    else if (key == "log_file")
+      text(key, value, params.logFile);
     else
       throw std::invalid_argument(source + ": unknown key '" + key + "'");
   }
-}
-
-/**
- * @brief Apply the parameter file `path`; its relative paths are relative to
- * its directory. @throws std::invalid_argument
- */
-inline void ApplyJsonFile(ProbeParams & params, const std::string & path)
-{
-  std::ifstream in(path);
-  if (!in)
-    throw std::invalid_argument("cannot open parameter file " + path);
-  nlohmann::json object;
-  try {
-    in >> object;
-  } catch (const nlohmann::json::exception & error) {
-    throw std::invalid_argument(path + ": " + error.what());
-  }
-  ApplyJson(params, object, path, DirectoryOf(path));
 }
 
 /**
@@ -1145,11 +1131,12 @@ inline nlohmann::json ToJson(const ProbeParams & params)
   return nlohmann::json{
       {"adapter_config", params.adapterConfig},
       {"fps", params.fps},
-      {"payload_bytes", params.payloadBytes},
-      {"buffer_bytes", params.bufferBytes},
+      {"point_cloud_bytes", params.size.pointCloudBytes},
+      {"image_width", params.size.imageWidth},
+      {"image_height", params.size.imageHeight},
       {"duration", params.duration},
       {"warmup", params.warmup},
-      {"log", params.log},
+      {"log_file", params.logFile},
   };
 }
 

@@ -5,25 +5,28 @@
 // SampleStreamProbe: the HCM side of the end-to-end test, run with
 // QCNodeSampleApp (-t StreamProbe) in a pipeline with SampleIpcAdapter. It
 // hosts HcmStreamProbeNode and passes frames to and from the Adapter sample
-// over the DataBroker:
+// over the DataBroker. The probe owns the frames in both directions:
 //
 //   HCM to ROS: StreamProbe --output_topic--> IpcAdapter (input_topic)
-//   ROS to HCM: IpcAdapter (output_topic) --input_topic--> StreamProbe
+//   ROS to HCM: StreamProbe --output_topic--> IpcAdapter (input_topic), empty frames
+//               IpcAdapter (output_topic) --input_topic--> StreamProbe, filled frames
 //
 // The Flow comes from the Adapter's static config, so both samples are given
 // the same adapter_config file. Stop() prints a summary and fails on a
 // process error, a lost or wrong frame, or no frame received.
 //
 // Attributes:
-//   adapter_config: (required) the Adapter's static config file
-//   output_topic  : (required for HCM to ROS) the topic to publish stamped frames on
-//   input_topic   : (required for ROS to HCM) the topic of the frames to check
-//   fps           : (optional) frames per second a sender sends, 0 for no pause, default 30
-//   payload_bytes : (optional) a sender's payload in the buffer, for a DmaBuf Contract
-//                   (PointCloud2; ImageLayout sends the rgb8 rows that fit); others ignore
-//                   it, default 1048576
-//   pool_size     : (optional) frames a sender cycles through, 1..32, default 4
-//   warmup        : (optional) seconds a receiver does not measure, default 0
+//   adapter_config   : (required) the Adapter's static config file
+//   output_topic     : (required) the topic to publish stamped (HCM to ROS) or empty frames on
+//   input_topic      : (required for ROS to HCM) the topic of the filled frames to check
+//   fps              : (optional) frames per second a sender sends, 0 for no pause, default 30
+//   point_cloud_bytes: (optional) bytes of a PointCloud2 sent, default 1048576
+//   image_width      : (optional) width of an rgb8 ImageLayout sent, default 1928
+//   image_height     : (optional) height of an rgb8 ImageLayout sent, default 160
+//   pool_size        : (optional) frames the probe cycles through, 1..32, default 4
+//   warmup           : (optional) seconds a receiver does not measure, default 0
+//
+// A receiver sizes the buffers of its frames by these at Init.
 //
 
 #include <atomic>
@@ -67,6 +70,8 @@ private:
   sp::ProbeFlow flow_;
   bool sender_{true};
   std::uint32_t fps_{30};
+  sp::ProbeFrameSize size_;
+  std::uint32_t poolSize_{4};
   std::string inputTopic_;
   std::string outputTopic_;
 
@@ -105,16 +110,17 @@ QCStatus_e SampleStreamProbe::Init(std::string name, SampleConfig_t & config)
   sender_ = flow_.direction == sp::ProbeDirection::kHcmToRos;
 
   fps_ = Get(config, "fps", static_cast<std::uint32_t>(30));
-  const std::uint32_t payloadBytes =
-      Get(config, "payload_bytes", static_cast<std::uint32_t>(1048576));
+  size_.pointCloudBytes = Get(config, "point_cloud_bytes", static_cast<std::uint32_t>(1048576));
+  size_.imageWidth = Get(config, "image_width", sp::kDefaultImageWidth);
+  size_.imageHeight = Get(config, "image_height", sp::kDefaultImageHeight);
   const std::uint32_t poolSize = Get(config, "pool_size", static_cast<std::uint32_t>(4));
+  poolSize_ = poolSize;
   const float warmup = Get(config, "warmup", 0.0f);
   inputTopic_ = Get(config, "input_topic", "");
   outputTopic_ = Get(config, "output_topic", "");
-  if (sender_ ? (outputTopic_.empty() || !inputTopic_.empty()) :
-                (inputTopic_.empty() || !outputTopic_.empty())) {
-    QC_ERROR("direction %d takes only %s", static_cast<int>(flow_.direction),
-        sender_ ? "output_topic" : "input_topic");
+  if (outputTopic_.empty() || (sender_ ? !inputTopic_.empty() : inputTopic_.empty())) {
+    QC_ERROR("direction %d takes %s", static_cast<int>(flow_.direction),
+        sender_ ? "only output_topic" : "input_topic and output_topic");
     return QC_STATUS_BAD_ARGUMENTS;
   }
   if (poolSize < 1 || poolSize > ContractFramePool::kMaxSize || warmup < 0.0f) {
@@ -122,13 +128,17 @@ QCStatus_e SampleStreamProbe::Init(std::string name, SampleConfig_t & config)
     return QC_STATUS_BAD_ARGUMENTS;
   }
 
-  if (sender_) {
-    ret = pool_.Init(flow_.contract, payloadBytes, poolSize);
-    if (ret != QC_STATUS_OK) {
-      QC_ERROR("failed to create %u %s frames of %u bytes: %d", poolSize, flow_.contract.c_str(),
-          payloadBytes, ret);
-      return ret;
-    }
+  std::string why;
+  const std::uint64_t bufferBytes = sp::HcmProbeBufferBytes(flow_.contract, size_, why);
+  if (!why.empty()) {
+    QC_ERROR("%s: %s", flow_.contract.c_str(), why.c_str());
+    return QC_STATUS_BAD_ARGUMENTS;
+  }
+  ret = pool_.Init(flow_.contract, static_cast<std::uint32_t>(bufferBytes), poolSize);
+  if (ret != QC_STATUS_OK) {
+    QC_ERROR("failed to create %u %s frames of %llu bytes: %d", poolSize, flow_.contract.c_str(),
+        static_cast<unsigned long long>(bufferBytes), ret);
+    return ret;
   }
 
   ret = Node::QCNodeFactory::CreateNode(sp::kHcmStreamProbeNodeType, node_);
@@ -144,7 +154,6 @@ QCStatus_e SampleStreamProbe::Init(std::string name, SampleConfig_t & config)
               {"direction", static_cast<int>(flow_.direction)},
               {"contract", flow_.contract},
               {"topic", flow_.topic},
-              {"payload_bytes", payloadBytes},
               {"warmup", warmup},
               {"globalBufferIdMap", {{{"name", "Probe"}, {"id", flow_.globalBufferId}}}},
           }},
@@ -158,8 +167,9 @@ QCStatus_e SampleStreamProbe::Init(std::string name, SampleConfig_t & config)
     return ret;
   }
 
-  if (sender_)
-    return pub_.Init(name, outputTopic_);
+  ret = pub_.Init(name, outputTopic_);
+  if (ret != QC_STATUS_OK || sender_)
+    return ret;
   // FIFO and as deep as any pool, so that no frame of the publisher is dropped.
   return sub_.Init(name, inputTopic_, ContractFramePool::kMaxSize, false);
 }
@@ -203,8 +213,10 @@ void SampleStreamProbe::Send()
       ++poolExhausted_;
       if (fps_ == 0)
         std::this_thread::sleep_for(kPoolWait);
-    } else if (Process(*frame) == QC_STATUS_OK) {
-      (void)pub_.Publish(frame);
+    } else {
+      (void)sp::HcmProbePrepareFrame(flow_.contract, frame->Descriptor(), size_);
+      if (Process(*frame) == QC_STATUS_OK)
+        (void)pub_.Publish(frame);
     }
     frame.reset();
 
@@ -220,6 +232,14 @@ void SampleStreamProbe::Send()
 void SampleStreamProbe::Receive()
 {
   while (!stop_) {
+    // Offer the frames back in the pool to the Adapter to fill, each at most once a round.
+    for (std::uint32_t i = 0; i < poolSize_; ++i) {
+      ContractFrameRef_t empty = pool_.Take();
+      if (empty == nullptr)
+        break;
+      (void)sp::HcmProbePrepareFrame(flow_.contract, empty->Descriptor(), size_);
+      (void)pub_.Publish(empty);
+    }
     ContractFrameRef_t frame;
     if (sub_.Receive(frame, kReceiveTimeoutMs) == QC_STATUS_OK) {
       (void)Process(*frame);

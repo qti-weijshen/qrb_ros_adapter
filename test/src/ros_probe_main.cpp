@@ -8,7 +8,7 @@
 // Exit code: 0 ok, 1 a frame failed verification or belonged to another
 // stream, 2 the probe could not start, 3 bad parameters.
 //
-// The only file it writes is `log`: ROS file logging (~/.ros/log) is off,
+// The only file it writes is `log_file`: ROS file logging (~/.ros/log) is off,
 // the ROS log still goes to the console and /rosout.
 //
 
@@ -32,21 +32,21 @@ int main(int argc, char ** argv)
         "usage: ros_stream_probe_node [--ros-args -p NAME:=VALUE ...]\n"
         "\n"
         "The ROS side of a probed stream, in a process of its own (DDS to the bridge).\n"
-        "Parameters come from the built-in defaults, then params_file (default\n"
-        "share/qrb_ros_adapter_stream_probe/probe_configs/stream_probe.json), then -p:\n"
-        "  params_file     JSON file of the parameters below\n"
-        "  adapter_config  the Adapter's static JSON\n"
-        "                  (probe_configs/adapter_point_cloud_h2r.json); the probe follows its\n"
-        "                  direction (0: HCM to ROS, this side receives;\n"
-        "                  1: ROS to HCM, this side sends), contract_type, ros_topic, qos_profile\n"
-        "  fps             frames per second of a sender, 0: unlimited (30)\n"
-        "  payload_bytes   payload of each frame this side sends (1048576)\n"
-        "  buffer_bytes    DMA buffer size of the HCM receiver (R2H); ignored on this side\n"
-        "  duration        seconds to run, 0: until a signal (0)\n"
-        "  warmup          seconds a receiver does not measure (0)\n"
-        "  log             text log, empty: none: a line per frame sent or received,\n"
-        "                  a monitor line every 5 s, events and the summary; the only file\n"
-        "                  this process writes (no ~/.ros/log)\n"
+        "Parameters, with -p or --params-file (default in brackets):\n"
+        "  adapter_config     the Adapter's static JSON\n"
+        "                     (probe_configs/adapter_point_cloud_h2r.json); the probe follows its\n"
+        "                     direction (0: HCM to ROS, this side receives;\n"
+        "                     1: ROS to HCM, this side sends), contract_type, ros_topic,\n"
+        "                     qos_profile\n"
+        "  fps                frames per second of a sender, 0: unlimited (30)\n"
+        "  point_cloud_bytes  bytes of a PointCloud2 a sender sends (1048576)\n"
+        "  image_width        width of an rgb8 ImageLayout a sender sends (1928)\n"
+        "  image_height       height of an rgb8 ImageLayout a sender sends (160)\n"
+        "  duration           seconds to run, 0: until a signal (0)\n"
+        "  warmup             seconds a receiver does not measure (0)\n"
+        "  log_file           text log, empty: none: a line per frame sent or received,\n"
+        "                     a monitor line every 5 s, events and the summary; the only file\n"
+        "                     this process writes (no ~/.ros/log)\n"
         "\n"
         "The same node loads into the bridge's container (zero-copy):\n"
         "  ros2 component load /qrb_ros_adapter_container qrb_ros_adapter_stream_probe \\\n"

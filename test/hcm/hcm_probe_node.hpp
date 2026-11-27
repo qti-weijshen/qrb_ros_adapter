@@ -10,7 +10,11 @@
 // a frame it passes to the HCM IPC Adapter. It is built into libQCNodeSample.so
 // by the qcnode build and registered with QCNodeFactory as
 // kHcmStreamProbeNodeType; SampleStreamProbe hosts it. This header gives hosts
-// the layout of its monitoring data.
+// the layout of its monitoring data and the size of the frames it takes.
+//
+// A sender fills the buffer of each frame: a point cloud over the whole buffer,
+// an image of the width and height HcmProbePrepareFrame() gave the descriptor.
+// A receiver takes a point cloud or an image of any size that fits the buffer.
 //
 // Static configuration, the QCNode `"static"` block:
 //
@@ -21,7 +25,6 @@
 //       "direction": 0,                // 0: sends (HCM to ROS), 1: receives
 //       "contract": "PointCloud2",     // short or full Contract name
 //       "topic": "/qrb_ros_adapter/stream_probe/points_h2r",   // only for the stream tag
-//       "payload_bytes": 1048576,      // a sender's payload; ignored by Inline Contracts
 //       "warmup": 0.0,                 // seconds a receiver does not measure
 //       "globalBufferIdMap": [ { "name": "Probe", "id": 0 } ]
 //     }
@@ -31,6 +34,7 @@
 //
 
 #include <cstdint>
+#include <string>
 #include <type_traits>
 
 #include "QC/Node/Ifs/QCNodeIfs.hpp"
@@ -64,6 +68,24 @@ struct HcmStreamProbeMonitoringData : public QC::QCNodeMonitoringBase_t
 };
 static_assert(std::is_trivially_copyable_v<HcmStreamProbeMonitoringData>,
     "Place() copies the monitoring data with memcpy");
+
+/**
+ * @brief Bytes of the buffer of a frame of `contract` of `size`, which a host
+ * sends or receives into. 0 for a Contract whose frames need no buffer, or
+ * with `why` when `size` does not suit.
+ */
+std::uint64_t HcmProbeBufferBytes(const std::string & contract,
+    const ProbeFrameSize & size,
+    std::string & why);
+
+/**
+ * @brief Ready the descriptor of a frame of `contract` before the host offers
+ * it to the probe or to the Adapter: an image takes the width and height of
+ * `size` and no layout. @return false if `descriptor` is not the Contract's.
+ */
+bool HcmProbePrepareFrame(const std::string & contract,
+    QC::Memory::QCBufferDescriptorBase_t & descriptor,
+    const ProbeFrameSize & size);
 
 }  // namespace qrb::adapter::stream_probe
 

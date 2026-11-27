@@ -28,12 +28,12 @@ class ProbeRecorder;
  * A component: load it into the Bridge's `qrb_ros_adapter_container` to share the
  * Bridge's process and intra-process (zero-copy) path, into any other
  * component container, or run it alone with `ros_stream_probe_node` to go
- * through DDS. Parameters are read once at construction (see probe.hpp, plus
- * `params_file`) and are then read-only; the Flow comes from the Adapter's
- * static config `adapter_config` names.
+ * through DDS. Parameters are read once at construction (see probe.hpp) and
+ * are then read-only; the Flow comes from the Adapter's static config
+ * `adapter_config` names.
  *
  * The probe stops at `duration`; unloading stops it as well. It writes a
- * summary to the ROS log and, with `log`, a text log of every frame and a
+ * summary to the ROS log and, with `log_file`, a text log of every frame and a
  * monitor line every 5 seconds.
  */
 class RosStreamProbeNode : public rclcpp::Node
@@ -57,7 +57,7 @@ public:
 private:
   /** @throws std::invalid_argument on bad parameters */
   void LoadParams();
-  void DeclareEffectiveParams(const std::string & paramsFile);
+  void DeclareEffectiveParams();
   void SendLoop();
   void Tick();
 

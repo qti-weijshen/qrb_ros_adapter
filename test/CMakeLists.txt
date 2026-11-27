@@ -3,7 +3,7 @@
 # through the HCM IPC Adapter and ROS IPC Bridge.
 #   src/probe.hpp        probe format, statistics and parameters of both sides
 #   src/ros_probe_*      RosStreamProbeNode (a component) and ros_stream_probe_node
-#   config/              the default parameter file and Adapter static configs
+#   config/              Adapter static configs
 #   launch/              the Bridge with RosStreamProbeNode in its container
 # The HCM side (hcm/: HcmStreamProbeNode and SampleStreamProbe) is built by the
 # qcnode build, with the HCM IPC Adapter; this package links no QCNode.
