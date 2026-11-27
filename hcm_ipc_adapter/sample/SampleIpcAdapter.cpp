@@ -13,9 +13,9 @@
  * there, for any Contract the Adapter maps; without, it sends a frame it fills itself
  * (FillFrame(), UpdateFrame()) every 1/fps second, for a Contract in kFilledContracts, and
  * rejects any other Contract in Init().
- * ROS to HCM (direction 1), for any mapped Contract: it fetches the latest ROS message into a
- * frame; with output_topic, it publishes every frame fetched there, and without, it fetches
- * every 1/fps second.
+ * ROS to HCM (direction 1), for any mapped Contract: it fetches the oldest waiting ROS message
+ * into a frame every 1/fps second; with output_topic, it fetches every waiting message at once,
+ * publishes each frame there, and waits 1/fps second only when no message waits.
  *
  * It prints the node state after each lifecycle call, the configuration read back through
  * GetConfigurationIfs() after Initialize(), and the monitoring and frame counts after Stop(). The
@@ -29,17 +29,17 @@
  *                   Flow attributes below. Without an "id", the sample's node id is used
  *   contract_type : (optional) a mapped Contract, default qrb.contract.sensor.v1.PointCloud2
  *   direction     : (optional) 0: HCM to ROS (default), 1: ROS to HCM
- *   ros_topic     : (optional) default /qrb_ros_adapter/sample/points for PointCloud2,
- *                   .../pose for PoseWithCovarianceStamped, .../detections_2d and
- *                   .../detections_3d for Detection2DArray and Detection3DArray, else
- *                   .../<message name in snake_case, e.g. odometry for Odometry>
+ *   ros_topic     : (optional) default /qrb_ros_adapter/sample/<name>, the name for the
+ *                   Contract: points (PointCloud2), pose (PoseWithCovarianceStamped), odom,
+ *                   cmd_vel (TwistStamped), tf, image, joint_state, pose_stamped, pose_array,
+ *                   vector3, detections_2d, detections_3d, imu
  *   reliability   : (optional) reliable or best_effort, default the ROS default
  *   durability    : (optional) volatile or transient_local, default the ROS default
  *   depth         : (optional) 1..32, default the ROS default
  *   input_topic   : (optional) direction 0: the topic of the frames to send
  *   output_topic  : (optional) direction 1: the topic to publish the fetched frames on
  *   pool_size     : (optional) frames to fetch into with output_topic, 1..32, default 4
- *   fps           : (optional) frames per second, 0 for no pause, default 30
+ *   fps           : (optional) frames per second sent or fetched, 0 for no pause, default 30
  *   payload_bytes : (optional) bytes of points sent to ROS, for PointCloud2, or of the rgb8
  *                   rows of an ImageLayout, default 1048576; for Detection2DArray and
  *                   Detection3DArray, the buffer that holds the two detections the sample sends
@@ -68,6 +68,7 @@
 #include "qrb_ros_adapter/hcm_ipc_adapter/flow_client/image_hcm_converter.hpp"
 #include "qrb_ros_adapter/hcm_ipc_adapter/ipc_adapter_node/hcm_ipc_adapter_node.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -303,8 +304,7 @@ private:
     static constexpr uint32_t kImageStride = ( kImageWidth * 3 + 15 ) / 16 * 16;
     static constexpr uint64_t kMaxReportedErrors = 10;
     static constexpr uint32_t kReceiveTimeoutMs = 100;
-    // How long to wait after a fetch that found no ROS message, or with every frame held.
-    static constexpr auto kNoDataWait = std::chrono::microseconds( 200 );
+    // How long to wait with every frame held.
     static constexpr auto kPoolWait = std::chrono::microseconds( 100 );
 };
 
@@ -324,10 +324,14 @@ QCStatus_e SampleIpcAdapter::LoadAdapterConfig( const std::string &path, std::st
     DataTree dt;
     DataTree node;
     std::string errors;
-    if ( ( QC_STATUS_OK != dt.Load( config, errors ) ) ||
-         ( QC_STATUS_OK != dt.Get( "static", node ) ) )
+    if ( QC_STATUS_OK != dt.Load( config, errors ) )
     {
-        QC_ERROR( "adapter_config %s has no \"static\" object: %s", path.c_str(), errors.c_str() );
+        QC_ERROR( "adapter_config %s is not valid JSON: %s", path.c_str(), errors.c_str() );
+        return QC_STATUS_BAD_ARGUMENTS;
+    }
+    if ( QC_STATUS_OK != dt.Get( "static", node ) )
+    {
+        QC_ERROR( "adapter_config %s has no \"static\" object", path.c_str() );
         return QC_STATUS_BAD_ARGUMENTS;
     }
     // Without an "id", the file takes the sample's node id; an "id" in the file wins.
@@ -376,25 +380,36 @@ uint32_t SampleIpcAdapter::DetectionBytes() const
 
 std::string SampleIpcAdapter::DefaultTopic() const
 {
+    // The default topic name of each Contract the Adapter maps.
+    static constexpr struct
+    {
+        const char *contract;
+        const char *topic;
+    } kDefaultTopics[] = {
+            { kPointCloudContract, "points" },
+            { kPoseContract, "pose" },
+            { "qrb.contract.nav.v1.Odometry", "odom" },
+            { "qrb.contract.geometry.v1.TwistStamped", "cmd_vel" },
+            { "qrb.contract.tf2.v1.TFMessage", "tf" },
+            { kImageContract, "image" },
+            { "qrb.contract.sensor.v1.JointState", "joint_state" },
+            { "qrb.contract.geometry.v1.PoseStamped", "pose_stamped" },
+            { "qrb.contract.geometry.v1.PoseArray", "pose_array" },
+            { "qrb.contract.geometry.v1.Vector3Stamped", "vector3" },
+            { kDetection2DContract, "detections_2d" },
+            { kDetection3DContract, "detections_3d" },
+            { kImuContract, "imu" },
+    };
     std::string topic = "/qrb_ros_adapter/sample/";
-    if ( kPointCloudContract == m_contract )
+    for ( const auto &entry : kDefaultTopics )
     {
-        return topic + "points";
-    }
-    if ( kPoseContract == m_contract )
-    {
-        return topic + "pose";
-    }
-    if ( kDetection2DContract == m_contract )
-    {
-        return topic + "detections_2d";
-    }
-    if ( kDetection3DContract == m_contract )
-    {
-        return topic + "detections_3d";
+        if ( m_contract == entry.contract )
+        {
+            return topic + entry.topic;
+        }
     }
 
-    // The message name of the Contract in snake_case, e.g. Odometry: odometry.
+    // Another Contract: its message name in snake_case, e.g. Odometry: odometry.
     std::string message = m_contract.substr( m_contract.rfind( '.' ) + 1 );
     bool first = true;
     for ( char c : message )
@@ -425,7 +440,6 @@ std::string SampleIpcAdapter::MakeAdapterConfig( SampleConfig_t &config )
     dt.Set<std::string>( "static.ros_topic", Get( config, "ros_topic", defaultTopic ) );
     std::string reliability = Get( config, "reliability", "" );
     std::string durability = Get( config, "durability", "" );
-    uint32_t depth = Get( config, "depth", (uint32_t) 0 );
     if ( !reliability.empty() )
     {
         dt.Set<std::string>( "static.qos_profile.reliability", reliability );
@@ -434,9 +448,10 @@ std::string SampleIpcAdapter::MakeAdapterConfig( SampleConfig_t &config )
     {
         dt.Set<std::string>( "static.qos_profile.durability", durability );
     }
-    if ( 0 != depth )
+    // A given depth goes in as it is, 0 too, for the config parser to check.
+    if ( config.end() != config.find( "depth" ) )
     {
-        dt.Set<uint32_t>( "static.qos_profile.depth", depth );
+        dt.Set<uint32_t>( "static.qos_profile.depth", Get( config, "depth", (uint32_t) 0 ) );
     }
 
     return dt.Dump();
@@ -1108,6 +1123,8 @@ void SampleIpcAdapter::SendFromTopic()
 
 void SampleIpcAdapter::FetchToTopic()
 {
+    const auto period = std::chrono::nanoseconds( ( 0 == m_fps ) ? 0 : 1000000000ULL / m_fps );
+
     while ( false == m_stop )
     {
         ContractFrameRef_t frame = m_pool.Take();
@@ -1115,19 +1132,19 @@ void SampleIpcAdapter::FetchToTopic()
         {
             m_poolExhausted++;
             std::this_thread::sleep_for( kPoolWait );
+            continue;
         }
-        else
+
+        QCStatus_e ret = Process( *frame );
+        if ( QC_STATUS_OK == ret )
         {
-            QCStatus_e ret = Process( *frame );
-            if ( QC_STATUS_OK == ret )
-            {
-                (void) m_pub.Publish( frame );
-            }
-            frame.reset();
-            if ( QC_STATUS_TIMEOUT == ret )
-            {
-                std::this_thread::sleep_for( kNoDataWait );
-            }
+            (void) m_pub.Publish( frame );
+        }
+        frame.reset();
+        // Fetch the next waiting message at once; wait a period only when none waits.
+        if ( ( QC_STATUS_OK != ret ) && ( period.count() > 0 ) )
+        {
+            std::this_thread::sleep_for( period );
         }
     }
 }

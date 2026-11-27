@@ -44,7 +44,7 @@ The Flow is set in the QCNode static config:
 
 | Field | Required | Description |
 | --- | --- | --- |
-| `name` | yes | Flow name, unique among the Flows of a Bridge. |
+| `name` | yes | Flow name, unique among the Flows of a Bridge, also with each character other than a letter or digit read as `_`. |
 | `id` | no | QCNode id (0–255), default 0; `SampleIpcAdapter` defaults it to its sample id. |
 | `contract_type` | yes | Contract full name, e.g. `qrb.contract.sensor.v1.PointCloud2`. |
 | `direction` | yes | `0`: HCM to ROS (the node publishes the descriptor); `1`: ROS to HCM (the node fills it in). |
@@ -62,11 +62,17 @@ transforms need host storage in the HCM descriptor (heap or a local DMA-BUF). A
 frame name longer than the HCM descriptor holds is rejected, not truncated.
 
 Monitoring reports `sessionConnected`, `frameCount`, `errorCount`,
-`last/average/min/maxLatencyNs` and `noDataCount`.
+`last/average/min/maxLatencyNs` and `noDataCount`. `frameCount` counts the calls
+that sent or received a frame, or failed; a ROS to HCM call that found no new
+ROS message counts only in `noDataCount`. A rejected config, and an
+error that fails `Initialize()` or `Start()` or closes the Session, is logged
+with its reason through the QCNode default logger.
 
 The ROS IPC Bridge takes no parameters and adds one ROS node for each
 registered Flow. One Bridge runs per device and serves up to 32 Flows at once;
-give each Flow its own `name` and `ros_topic`.
+give each Flow its own `name`, or the Bridge rejects it. Flows of one direction
+may share a `ros_topic`; a Flow of the same Contract in the other direction on
+that topic is rejected, as it would loop the messages back.
 
 ## Supported targets
 
@@ -90,7 +96,9 @@ On the HCM side, create one IPC Adapter Node per Flow with `QCNodeFactory` and
 drive it like any other
 [QCNode](https://github.com/qualcomm/QcNode/blob/main/docs/QCNode.md). Buffer 0
 of the frame is the Contract descriptor from `CreateQrbBufferDescriptor()`:
-direction 0 publishes it, direction 1 fills it with the newest ROS message.
+direction 0 publishes it, direction 1 fills it with the oldest ROS message
+waiting. Up to `depth` messages wait, so a late call gets the next message
+instead of missing it.
 
 `SampleIpcAdapter` is such a host:
 
@@ -109,7 +117,7 @@ ROS probe of the [Test](#test) takes `<setting>:=<value>` on its launch.
 | `reliability`, `durability`, `depth` | `rclcpp::QoS(10)` | IpcAdapter: the `qos_profile` fields above. |
 | `adapter_config` | StreamProbe: required; ROS probe: `adapter_point_cloud_h2r.json` | All: a static config file; on IpcAdapter it replaces the two rows above. |
 | `input_topic` / `output_topic` | | IpcAdapter, StreamProbe: takes frames from / gives frames to another sample. |
-| `fps` | `30` | All: frames per second a sender sends, `0` for no pause. |
+| `fps` | `30` | All: frames per second a sender sends, or the IpcAdapter fetches from ROS, `0` for no pause. With `output_topic`, the IpcAdapter fetches every waiting message at once and waits `1/fps` s only when none waits. |
 | `payload_bytes` | `1048576` | All: DMA-BUF payload of a DmaBuf Contract a sender sends. |
 | `duration` | `0` | ROS probe: seconds to run, `0` until stopped. |
 | `log` | | IpcAdapter, ROS probe: text log file. IpcAdapter writes what it prints and a monitor line every 10 s. |

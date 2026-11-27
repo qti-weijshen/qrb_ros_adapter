@@ -7,6 +7,7 @@
 #include <cstring>
 #include <utility>
 
+#include "QC/Infras/Log/Logger.hpp"
 #include "QC/Node/NodeBase.hpp"
 
 namespace qrb::adapter
@@ -40,6 +41,21 @@ QC::QCStatus_e ToQcStatus(Status status)
       return QC::QC_STATUS_FAIL;
   }
   return QC::QC_STATUS_FAIL;
+}
+
+// Logs `what` with the diagnostic, which lists its reasons as "<reason>; <reason>; ".
+void LogError(const std::string & what, std::string diagnostic)
+{
+  while (!diagnostic.empty() && (diagnostic.back() == ' ' || diagnostic.back() == ';'))
+    diagnostic.pop_back();
+  using namespace QC;  // QC_LOG_ERROR names the QC logger types unqualified.
+  QC_LOG_ERROR("%s: %s", what.c_str(), diagnostic.empty() ? "no details" : diagnostic.c_str());
+}
+
+std::string FlowFailure(const char * operation, const std::string & flowId, Status status)
+{
+  return std::string("IPC Adapter flow '") + flowId + "' " + operation + " failed (" +
+         ToString(status) + ")";
 }
 
 }  // namespace
@@ -146,13 +162,15 @@ QC::QCStatus_e HcmIpcAdapterNodeMonitoring::Place(void * data, std::uint32_t & s
 void HcmIpcAdapterNodeMonitoring::RecordProcess(Status status, std::uint64_t latencyNs)
 {
   std::lock_guard<std::mutex> lock(mutex_);
-  ++data_.frameCount;
-  if (status == Status::kNoData)
+  if (status == Status::kNoData) {
     ++data_.noDataCount;
-  else if (status != Status::kOk)
-    ++data_.errorCount;
-  if (status != Status::kOk)
     return;
+  }
+  ++data_.frameCount;
+  if (status != Status::kOk) {
+    ++data_.errorCount;
+    return;
+  }
 
   // Only calls that moved a sample contribute to the latency values.
   ++latencySamples_;
@@ -203,15 +221,17 @@ QC::QCStatus_e HcmIpcAdapterNode::Initialize(QC::QCNodeInit_t & config)
   std::string diagnostic;
   QC::QCStatus_e configStatus = config_.VerifyAndSet(config.config, diagnostic);
   if (configStatus != QC::QC_STATUS_OK) {
+    LogError("IPC Adapter config rejected", diagnostic);
     config_.Clear();
     state_.store(QC::QC_OBJECT_STATE_INITIAL);
     return configStatus;
   }
 
-  Status initialized =
-      client_.Initialize(config_.Adapter().flowConfig, bootstrapSocketPath_, diagnostic);
+  const FlowConfig & flow = config_.Adapter().flowConfig;
+  Status initialized = client_.Initialize(flow, bootstrapSocketPath_, diagnostic);
   QC::QCStatus_e result = ToQcStatus(initialized);
   if (initialized != Status::kOk) {
+    LogError(FlowFailure("Initialize", flow.flowId, initialized), diagnostic);
     // Any failure clears the configuration and returns the node to INITIAL. NO_RESOURCE may be
     // transient, so the host may retry Initialize.
     client_.Close();
@@ -233,9 +253,10 @@ QC::QCStatus_e HcmIpcAdapterNode::Start()
   if (flowFailure_ != Status::kOk) {
     // The Session was lost: register the Flow again, under a new token.
     std::string diagnostic;
-    Status reconnected =
-        client_.Initialize(config_.Adapter().flowConfig, bootstrapSocketPath_, diagnostic);
+    const FlowConfig & flow = config_.Adapter().flowConfig;
+    Status reconnected = client_.Initialize(flow, bootstrapSocketPath_, diagnostic);
     if (reconnected != Status::kOk) {
+      LogError(FlowFailure("Start", flow.flowId, reconnected), diagnostic);
       client_.Close();
       state_.store(QC::QC_OBJECT_STATE_READY);
       return ToQcStatus(reconnected);
@@ -280,6 +301,8 @@ void HcmIpcAdapterNode::FinishOperation(Status status)
     return;
   if (!IsFatalForFlow(status) && client_.IsOpen())
     return;
+  LogError(FlowFailure("ProcessFrameDescriptor", config_.Adapter().flowConfig.flowId, status),
+      client_.FailureDiagnostic());
   client_.Close();
   flowFailure_ = status;
   monitoring_.SetSessionConnected(false);

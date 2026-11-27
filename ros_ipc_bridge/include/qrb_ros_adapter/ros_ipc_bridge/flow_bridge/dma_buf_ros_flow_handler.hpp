@@ -13,12 +13,11 @@
 #include <memory>
 #include <rclcpp/publisher.hpp>
 #include <rclcpp/qos.hpp>
-#include <rclcpp/subscription.hpp>
 #include <rclcpp/type_adapter.hpp>
 #include <string>
 #include <utility>
 
-#include "qrb_ros_adapter/ros_ipc_bridge/flow_bridge/latest_sample.hpp"
+#include "qrb_ros_adapter/ros_ipc_bridge/flow_bridge/fetch_subscription.hpp"
 #include "qrb_ros_adapter/ros_ipc_bridge/flow_bridge/ros_conversion.hpp"
 #include "qrb_ros_adapter/ros_ipc_bridge/flow_bridge/ros_dma_buffer_pool.hpp"
 #include "qrb_ros_adapter/ros_ipc_bridge/flow_bridge/ros_flow_handler.hpp"
@@ -52,8 +51,7 @@ public:
     config_ = config;
     const rclcpp::QoS qos = MakeRosQos(config);
     if (config.direction == Direction::kRosToHcm) {
-      subscription_ = node.create_subscription<RosMessageT>(config.rosTopic, qos,
-          [this](std::shared_ptr<RosMessageT> message) { latest_.Store(std::move(message)); });
+      subscription_.Open(node, config.rosTopic, qos);
     } else {
       pool_ =
           std::make_unique<RosDmaBufferPool>(RosDmaBufferPoolSize(config.qosProfile), heapName_);
@@ -67,8 +65,7 @@ public:
 
   void Close() noexcept override
   {
-    subscription_.reset();
-    latest_.Clear();
+    subscription_.Close();
     publisher_.reset();
     if (pool_ != nullptr)
       pool_->Shutdown();
@@ -81,17 +78,13 @@ protected:
       std::string & diagnostic) override
   {
     outPayload = OutboundPayload{};
-    if (subscription_ == nullptr)
+    if (!subscription_.IsOpen())
       return Status::kBadState;
 
-    std::shared_ptr<RosMessageT> message;
-    if (!latest_.Take(message))
+    const std::shared_ptr<RosMessageT> message = subscription_.Take();
+    if (message == nullptr)
       return Status::kNoData;
 
-    if (message == nullptr) {
-      diagnostic += "received a null ROS transport message; ";
-      return Status::kConversionError;
-    }
     RosToContractPayload conversionPayload;
     ConversionResult converted =
         RosConversion<RosMessageT, ContractT>::RosToContract(*message, target, conversionPayload);
@@ -235,8 +228,7 @@ private:
 
   std::string heapName_;
   FlowConfig config_;
-  typename rclcpp::Subscription<RosMessageT>::SharedPtr subscription_;
-  LatestSample<std::shared_ptr<RosMessageT>> latest_;
+  FetchSubscription<RosMessageT> subscription_;
   typename rclcpp::Publisher<RosMessageT>::SharedPtr publisher_;
   std::unique_ptr<RosDmaBufferPool> pool_;
 };

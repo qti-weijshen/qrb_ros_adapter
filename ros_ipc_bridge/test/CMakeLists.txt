@@ -1,9 +1,9 @@
 # -----------------------------------------------------------------------------
 # ROS IPC Bridge unit tests.
 #
-# Converters, LatestSample and the registry; no ROS Context, no socket and
-# no DMA heap. Flow Bridges and the Manager are exercised by the end-to-end
-# test in the top-level test/ directory.
+# Converters, FetchSubscription and the registry; only FetchSubscription uses a
+# ROS Context, and nothing uses a socket or a DMA heap. Flow Bridges and the
+# Manager are exercised by the end-to-end test in the top-level test/ directory.
 #
 # Tests link the production libraries; no production source is compiled twice.
 # -----------------------------------------------------------------------------

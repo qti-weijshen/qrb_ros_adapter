@@ -8,10 +8,9 @@
 #include <memory>
 #include <rclcpp/publisher.hpp>
 #include <rclcpp/qos.hpp>
-#include <rclcpp/subscription.hpp>
 #include <string>
 
-#include "qrb_ros_adapter/ros_ipc_bridge/flow_bridge/latest_sample.hpp"
+#include "qrb_ros_adapter/ros_ipc_bridge/flow_bridge/fetch_subscription.hpp"
 #include "qrb_ros_adapter/ros_ipc_bridge/flow_bridge/ros_conversion.hpp"
 #include "qrb_ros_adapter/ros_ipc_bridge/flow_bridge/ros_flow_handler.hpp"
 #include "qrb_ros_adapter/ros_ipc_bridge/flow_bridge/ros_qos.hpp"
@@ -32,11 +31,7 @@ public:
   {
     const rclcpp::QoS qos = MakeRosQos(config);
     if (config.direction == Direction::kRosToHcm) {
-      subscription_ = node.create_subscription<RosMessageT>(
-          config.rosTopic, qos, [this](typename RosMessageT::SharedPtr message) {
-            if (message != nullptr)
-              latest_.Store(*message);
-          });
+      subscription_.Open(node, config.rosTopic, qos);
     } else {
       publisher_ = node.create_publisher<RosMessageT>(config.rosTopic, qos);
     }
@@ -48,8 +43,7 @@ public:
 
   void Close() noexcept override
   {
-    subscription_.reset();
-    latest_.Clear();
+    subscription_.Close();
     publisher_.reset();
   }
 
@@ -58,16 +52,16 @@ protected:
       OutboundPayload & outPayload,
       std::string & diagnostic) override
   {
-    if (subscription_ == nullptr)
+    if (!subscription_.IsOpen())
       return Status::kBadState;
 
-    RosMessageT message;
-    if (!latest_.Take(message))
+    const std::shared_ptr<RosMessageT> message = subscription_.Take();
+    if (message == nullptr)
       return Status::kNoData;
 
     outPayload = OutboundPayload{};
     ConversionResult converted =
-        RosConversion<RosMessageT, ContractT>::RosToContract(message, target);
+        RosConversion<RosMessageT, ContractT>::RosToContract(*message, target);
     if (!converted) {
       diagnostic += converted.Diagnostic();
       return Status::kConversionError;
@@ -98,8 +92,7 @@ protected:
   }
 
 private:
-  typename rclcpp::Subscription<RosMessageT>::SharedPtr subscription_;
-  LatestSample<RosMessageT> latest_;
+  FetchSubscription<RosMessageT> subscription_;
   typename rclcpp::Publisher<RosMessageT>::SharedPtr publisher_;
 };
 

@@ -52,6 +52,7 @@ struct HcmIpcAdapterMonitoringData : public QC::QCNodeMonitoringBase_t
   /** 1: the data Session with the ROS Bridge is open; 0 before it is set up and after a fatal
    * error. */
   std::uint32_t sessionConnected{0};
+  /** Calls that sent or received a frame, or failed; no-data calls are excluded. */
   std::uint64_t frameCount{0};
   /** Calls that failed: dropped frames (frame errors), then every call after a fatal error. */
   std::uint64_t errorCount{0};
@@ -60,7 +61,7 @@ struct HcmIpcAdapterMonitoringData : public QC::QCNodeMonitoringBase_t
   std::uint64_t averageLatencyNs{0};
   std::uint64_t minLatencyNs{0};
   std::uint64_t maxLatencyNs{0};
-  /** ROS_TO_HCM calls that found no fresh sample; counted in frameCount, not errorCount. */
+  /** ROS_TO_HCM calls that found no fresh sample; counted in neither frameCount nor errorCount. */
   std::uint64_t noDataCount{0};
 };
 

@@ -29,6 +29,16 @@ namespace
 constexpr std::chrono::milliseconds kBootstrapPollInterval{200};
 constexpr std::chrono::milliseconds kBootstrapRequestTimeout{2000};
 constexpr std::size_t kMaxFlows = 32;
+
+// ROS node name of a Flow: characters other than letters and digits map to '_'.
+std::string FlowNodeName(const std::string & flowId)
+{
+  std::string nodeName = "qrb_ros_adapter_flow_";
+  for (char c : flowId) {
+    nodeName.push_back(std::isalnum(static_cast<unsigned char>(c)) ? c : '_');
+  }
+  return nodeName;
+}
 }  // namespace
 
 RosBridgeManager::RosBridgeManager(std::shared_ptr<rclcpp::Executor> executor,
@@ -228,12 +238,21 @@ Status RosBridgeManager::RegisterFlow(const ipc_proto::RegisterFlowRequest & req
   config.timeoutMs = request.timeout_ms();
   config.startupTimeoutMs = request.startup_timeout_ms();
   config.qosProfile = FromProtoQosProfile(request.qos_profile());
+  const std::string nodeName = FlowNodeName(config.flowId);
   FlowRegistration registration;
   {
     std::lock_guard<std::mutex> lock(flowsMutex_);
     if (flows_.find(config.flowId) != flows_.end()) {
       diagnostic = "flow_id is already registered";
       return Status::kInvalidArgument;
+    }
+    for (const auto & [existingId, existing] : flows_) {
+      (void)existing;
+      if (FlowNodeName(existingId) == nodeName) {
+        diagnostic = "flow_id '" + config.flowId + "' gives the ROS node name '" + nodeName +
+                     "' of the registered flow '" + existingId + "'";
+        return Status::kInvalidArgument;
+      }
     }
     if (flows_.size() >= kMaxFlows) {
       diagnostic = "maximum Flow count reached";
@@ -267,10 +286,6 @@ Status RosBridgeManager::RegisterFlow(const ipc_proto::RegisterFlowRequest & req
     }
   }
 
-  std::string nodeName = "qrb_ros_adapter_flow_";
-  for (char c : config.flowId) {
-    nodeName.push_back(std::isalnum(static_cast<unsigned char>(c)) ? c : '_');
-  }
   std::vector<rclcpp::Parameter> parameters = {
       {"flow_id", config.flowId},
       {"contract_type", config.contractTypeName},
